@@ -1,0 +1,40 @@
+name: MacBrains specification
+
+on:
+  push:
+    branches:
+      - "macbrains/**"
+    paths:
+      - "AGENTS.md"
+      - "MACBRAINS.md"
+      - "docs/macbrains/**"
+      - "scripts/validate-macbrains-spec.mjs"
+      - ".github/workflows/macbrains-spec.yml"
+  pull_request:
+    paths:
+      - "AGENTS.md"
+      - "MACBRAINS.md"
+      - "docs/macbrains/**"
+      - "scripts/validate-macbrains-spec.mjs"
+      - ".github/workflows/macbrains-spec.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate campaign files
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24.13.1"
+          package-manager-cache: false
+
+      - name: Validate MacBrains specification
+        run: node scripts/validate-macbrains-spec.mjs
