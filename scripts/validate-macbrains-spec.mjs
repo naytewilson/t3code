@@ -135,7 +135,10 @@ if (manifest !== null) {
       typeof item.ownershipGroup === "string" && item.ownershipGroup.length > 0,
       `package ${item.id} must define ownershipGroup`,
     );
-    expect(Array.isArray(item.primaryAcceptancePrefixes), `package ${item.id} acceptance prefixes must be an array`);
+    expect(
+      Array.isArray(item.primaryAcceptancePrefixes),
+      `package ${item.id} acceptance prefixes must be an array`,
+    );
   }
 
   validateDependencyGraph(packages);
@@ -170,8 +173,14 @@ if (templates !== null) {
     expect(ids.has(required), `missing required workflow template: ${required}`);
   }
   for (const item of items) {
-    expect(Array.isArray(item.lifecycle) && item.lifecycle.length > 0, `workflow ${item.id} needs lifecycle steps`);
-    expect(Array.isArray(item.topology) && item.topology.length > 0, `workflow ${item.id} needs topology`);
+    expect(
+      Array.isArray(item.lifecycle) && item.lifecycle.length > 0,
+      `workflow ${item.id} needs lifecycle steps`,
+    );
+    expect(
+      Array.isArray(item.topology) && item.topology.length > 0,
+      `workflow ${item.id} needs topology`,
+    );
     expect(
       Array.isArray(item.requiredReceipts) && item.requiredReceipts.length > 0,
       `workflow ${item.id} needs required receipts`,
@@ -222,13 +231,19 @@ if (acceptance !== null) {
       `acceptance matrix is missing section ${section}`,
     );
   }
-  expect(acceptance.includes("## Final release gate"), "acceptance matrix is missing final release gate");
+  expect(
+    acceptance.includes("## Final release gate"),
+    "acceptance matrix is missing final release gate",
+  );
   expect(acceptance.includes("U01"), "acceptance matrix is missing canonical end-to-end row U01");
 }
 
 const index = readText("docs/macbrains/README.md");
 if (index !== null) {
-  for (const document of requiredDocuments.filter((item) => item.startsWith("docs/macbrains/"))) {
+  const indexedDocuments = requiredDocuments.filter(
+    (item) => item.startsWith("docs/macbrains/") && item !== "docs/macbrains/README.md",
+  );
+  for (const document of indexedDocuments) {
     const basename = path.basename(document);
     expect(index.includes(basename), `specification index does not reference ${basename}`);
   }
