@@ -12,11 +12,15 @@
     "docs/macbrains/PROJECT_PROFILES.md",
     "docs/macbrains/DOMAIN_MODEL.md",
     "docs/macbrains/IMPLEMENTATION_LEDGER.md",
+    "docs/macbrains/CAMPAIGN_MANIFEST.json",
+    "docs/macbrains/ORCHESTRATION_PLAN.md",
+    "docs/macbrains/WORKFLOW_TEMPLATES.json",
     "docs/macbrains/ACCEPTANCE_MATRIX.md",
     "docs/macbrains/DEFAULT_POLICIES.json",
     "docs/macbrains/FORK_IDENTITY_AND_RELEASE.md",
     "docs/macbrains/PULL_TO_MAC.md",
     "docs/macbrains/IMPLEMENTATION_HANDOFF.md",
+    "docs/macbrains/F0_EXECUTION_PROMPT.md",
     "docs/macbrains/AGENT_EXECUTION_PROMPT.md"
   ],
   "statusVocabulary": [
