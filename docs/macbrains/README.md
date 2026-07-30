@@ -4,12 +4,16 @@ Read in this order:
 
 1. [`../../MACBRAINS.md`](../../MACBRAINS.md) — non-negotiable operating contract.
 2. [`FORK_BASELINE.md`](./FORK_BASELINE.md) — verified initial architecture and limitation inventory; re-verify before acting.
-3. [`PRODUCT_SPEC.md`](./PRODUCT_SPEC.md) — complete product behavior and UX.
-4. [`DOMAIN_MODEL.md`](./DOMAIN_MODEL.md) — commands, events, aggregates, receipts, and invariants.
-5. [`IMPLEMENTATION_LEDGER.md`](./IMPLEMENTATION_LEDGER.md) — dependency-ordered implementation packages.
-6. [`ACCEPTANCE_MATRIX.md`](./ACCEPTANCE_MATRIX.md) — proof required before any package or release is complete.
-7. [`DEFAULT_POLICIES.json`](./DEFAULT_POLICIES.json) — machine-readable initial policy intent.
-8. [`AGENT_EXECUTION_PROMPT.md`](./AGENT_EXECUTION_PROMPT.md) — root prompt for implementation agents.
+3. [`DOCUMENTATION_AUDIT.md`](./DOCUMENTATION_AUDIT.md) — documentation coverage, contradictions, operational constraints, and issue-backed risk register.
+4. [`PRODUCT_SPEC.md`](./PRODUCT_SPEC.md) — complete product behavior and UX.
+5. [`DOMAIN_MODEL.md`](./DOMAIN_MODEL.md) — commands, events, aggregates, receipts, and invariants.
+6. [`IMPLEMENTATION_LEDGER.md`](./IMPLEMENTATION_LEDGER.md) — dependency-ordered implementation packages.
+7. [`ACCEPTANCE_MATRIX.md`](./ACCEPTANCE_MATRIX.md) — proof required before any package or release is complete.
+8. [`DEFAULT_POLICIES.json`](./DEFAULT_POLICIES.json) — machine-readable initial policy intent.
+9. [`FORK_IDENTITY_AND_RELEASE.md`](./FORK_IDENTITY_AND_RELEASE.md) — application, data, service, hosted-control-plane, and updater isolation from upstream.
+10. [`PULL_TO_MAC.md`](./PULL_TO_MAC.md) — safe fetch, worktree, verification, integration, and cleanup instructions for the Mac.
+11. [`IMPLEMENTATION_HANDOFF.md`](./IMPLEMENTATION_HANDOFF.md) — exact campaign handoff, evidence gaps, first package ownership, and stop conditions.
+12. [`AGENT_EXECUTION_PROMPT.md`](./AGENT_EXECUTION_PROMPT.md) — root prompt for implementation agents.
 
 ## Canonical status
 
@@ -25,6 +29,10 @@ Start with `F0 — Work lane and source-truth contracts`. Do not begin disconnec
 - define an ownership boundary that avoids parallel edits to shared contract files;
 - obtain independent architecture advice before changing persistence/domain schemas;
 - implement the full F0 vertical slice with migration and focused proof.
+
+## Campaign tracking
+
+GitHub Issues are disabled in this fork, so the authoritative implementation tracker is `IMPLEMENTATION_LEDGER.md` plus the evidence fields in `ACCEPTANCE_MATRIX.md`. Do not maintain a conflicting private checklist.
 
 ## Campaign completion
 
