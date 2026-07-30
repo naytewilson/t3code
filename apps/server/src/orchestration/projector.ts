@@ -1,4 +1,10 @@
-import type { OrchestrationEvent, OrchestrationReadModel, ThreadId } from "@t3tools/contracts";
+import type {
+  OrchestrationEvent,
+  OrchestrationReadModel,
+  ThreadId,
+  WorkLane,
+  WorkLaneId,
+} from "@t3tools/contracts";
 import {
   OrchestrationCheckpointSummary,
   OrchestrationMessage,
@@ -10,10 +16,19 @@ import * as Schema from "effect/Schema";
 
 import { toProjectorDecodeError, type OrchestrationProjectorDecodeError } from "./Errors.ts";
 import {
+  LaneCreatedPayload,
+  LaneDeliverableRegisteredPayload,
+  LaneImportedPayload,
+  LaneMetaUpdatedPayload,
+  LanePlanActivatedPayload,
+  LanePlanProposedPayload,
+  LaneStateChangedPayload,
+  LaneTaskContractUpdatedPayload,
   MessageSentPayloadSchema,
   ProjectCreatedPayload,
   ProjectDeletedPayload,
   ProjectMetaUpdatedPayload,
+  SourceTruthPreflightRecordedPayload,
   ThreadActivityAppendedPayload,
   ThreadArchivedPayload,
   ThreadCreatedPayload,
@@ -33,6 +48,7 @@ import {
 } from "./Schemas.ts";
 
 type ThreadPatch = Partial<Omit<OrchestrationThread, "id" | "projectId">>;
+type LanePatch = Partial<Omit<WorkLane, "id">>;
 const MAX_THREAD_MESSAGES = 2_000;
 const MAX_THREAD_CHECKPOINTS = 500;
 
@@ -71,6 +87,14 @@ function updateThread(
   patch: ThreadPatch,
 ): OrchestrationThread[] {
   return threads.map((thread) => (thread.id === threadId ? { ...thread, ...patch } : thread));
+}
+
+function updateLane(
+  lanes: ReadonlyArray<WorkLane>,
+  laneId: WorkLaneId,
+  patch: LanePatch,
+): WorkLane[] {
+  return lanes.map((lane) => (lane.id === laneId ? { ...lane, ...patch } : lane));
 }
 
 function decodeForEvent<A>(
@@ -187,6 +211,7 @@ export function createEmptyReadModel(nowIso: string): OrchestrationReadModel {
     snapshotSequence: 0,
     projects: [],
     threads: [],
+    lanes: [],
     updatedAt: nowIso,
   };
 }
@@ -746,6 +771,154 @@ export function projectEvent(
             }),
           };
         }),
+      );
+
+    case "lane.created":
+      return decodeForEvent(LaneCreatedPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => {
+          const existing = nextBase.lanes.find((entry) => entry.id === payload.lane.id);
+          return {
+            ...nextBase,
+            lanes: existing
+              ? nextBase.lanes.map((entry) =>
+                  entry.id === payload.lane.id ? payload.lane : entry,
+                )
+              : [...nextBase.lanes, payload.lane],
+          };
+        }),
+      );
+
+    case "lane.imported":
+      return decodeForEvent(LaneImportedPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => {
+          const existing = nextBase.lanes.find((entry) => entry.id === payload.lane.id);
+          return {
+            ...nextBase,
+            lanes: existing
+              ? nextBase.lanes.map((entry) =>
+                  entry.id === payload.lane.id ? payload.lane : entry,
+                )
+              : [...nextBase.lanes, payload.lane],
+          };
+        }),
+      );
+
+    case "lane.state-changed":
+      return decodeForEvent(LaneStateChangedPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          lanes: updateLane(nextBase.lanes, payload.laneId, {
+            state: payload.toState,
+            resumeState: payload.resumeState,
+            updatedAt: payload.updatedAt,
+            completedAt:
+              payload.toState === "completed"
+                ? payload.updatedAt
+                : payload.fromState === "completed"
+                  ? null
+                  : (nextBase.lanes.find((lane) => lane.id === payload.laneId)?.completedAt ??
+                    null),
+          }),
+        })),
+      );
+
+    case "lane.task-contract-updated":
+      return decodeForEvent(
+        LaneTaskContractUpdatedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          lanes: updateLane(nextBase.lanes, payload.laneId, {
+            taskContract: payload.taskContract,
+            updatedAt: payload.updatedAt,
+          }),
+        })),
+      );
+
+    case "lane.meta-updated":
+      return decodeForEvent(LaneMetaUpdatedPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          lanes: updateLane(nextBase.lanes, payload.laneId, {
+            ...(payload.title !== undefined ? { title: payload.title } : {}),
+            ...(payload.priority !== undefined ? { priority: payload.priority } : {}),
+            ...(payload.classification !== undefined
+              ? { classification: payload.classification }
+              : {}),
+            ...(payload.branch !== undefined ? { branch: payload.branch } : {}),
+            ...(payload.worktreePath !== undefined ? { worktreePath: payload.worktreePath } : {}),
+            ...(payload.baseRef !== undefined ? { baseRef: payload.baseRef } : {}),
+            ...(payload.repositoryIdentity !== undefined
+              ? { repositoryIdentity: payload.repositoryIdentity }
+              : {}),
+            updatedAt: payload.updatedAt,
+          }),
+        })),
+      );
+
+    case "lane.plan-proposed":
+      return decodeForEvent(LanePlanProposedPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          lanes: updateLane(nextBase.lanes, payload.laneId, {
+            updatedAt: payload.proposedAt,
+          }),
+        })),
+      );
+
+    case "lane.plan-activated":
+      return decodeForEvent(LanePlanActivatedPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          lanes: updateLane(nextBase.lanes, payload.laneId, {
+            activePlanRevisionId: payload.planRevisionId,
+            updatedAt: payload.updatedAt,
+          }),
+        })),
+      );
+
+    case "lane.deliverable-registered":
+      return decodeForEvent(
+        LaneDeliverableRegisteredPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => {
+          const lane = nextBase.lanes.find((entry) => entry.id === payload.laneId);
+          if (!lane) {
+            return nextBase;
+          }
+          const deliverableIds = lane.deliverableIds.includes(payload.deliverableId)
+            ? lane.deliverableIds
+            : [...lane.deliverableIds, payload.deliverableId];
+          return {
+            ...nextBase,
+            lanes: updateLane(nextBase.lanes, payload.laneId, {
+              deliverableIds,
+              updatedAt: payload.updatedAt,
+            }),
+          };
+        }),
+      );
+
+    case "source-truth.preflight-recorded":
+      return decodeForEvent(
+        SourceTruthPreflightRecordedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          lanes: updateLane(nextBase.lanes, payload.laneId, {
+            sourceTruthRevisionId: payload.revision.id,
+            updatedAt: payload.recordedAt,
+          }),
+        })),
       );
 
     default:

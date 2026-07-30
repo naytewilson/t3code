@@ -41,7 +41,7 @@ All foundations -> E0 end-to-end acceptance
 
 ## F0 — Work lane and source-truth contracts
 
-**Status:** NOT_STARTED
+**Status:** IMPLEMENTED
 
 **Objective:** Add the durable `WorkLane`, `TaskContract`, `AcceptanceCriterion`, `SourceTruthRevision`, lifecycle state, commands, events, decider invariants, projector support, persistence schema, and compatibility migration.
 

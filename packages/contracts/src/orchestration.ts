@@ -19,8 +19,47 @@ import {
   ThreadId,
   TrimmedNonEmptyString,
   TurnId,
+  WorkLaneId,
 } from "./baseSchemas.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
+import {
+  LaneBlockCommand,
+  LaneCancelCommand,
+  LaneCompletionInvalidateCommand,
+  LaneCompletionRequestCommand,
+  LaneCreateCommand,
+  LaneCreatedPayload,
+  LaneDeliverableRegisterCommand,
+  LaneDeliverableRegisteredPayload,
+  LaneExecutionStartCommand,
+  LaneFailCommand,
+  LaneImportedPayload,
+  LaneMetaUpdateCommand,
+  LaneMetaUpdatedPayload,
+  LaneOrientationRecordCommand,
+  LanePlanActivateCommand,
+  LanePlanActivatedPayload,
+  LanePlanProposeCommand,
+  LanePlanProposedPayload,
+  LanePreflightRequestCommand,
+  LaneRecoveryRequestCommand,
+  LaneReviewRequestCommand,
+  LaneStateChangedPayload,
+  LaneSupersedeCommand,
+  LaneTaskContractUpdateCommand,
+  LaneTaskContractUpdatedPayload,
+  LaneTestingStartCommand,
+  LaneUnblockCommand,
+  SourceTruthConflictRecordCommand,
+  SourceTruthConflictRecordedPayload,
+  SourceTruthPreflightRecordCommand,
+  SourceTruthPreflightRecordedPayload,
+  SourceTruthRefreshRequestCommand,
+  SourceTruthRefreshRequestedPayload,
+  WorkLane,
+  WorkLaneDetailSnapshot,
+  WorkLaneShell,
+} from "./workLane.ts";
 
 export const ORCHESTRATION_WS_METHODS = {
   dispatchCommand: "orchestration.dispatchCommand",
@@ -29,6 +68,8 @@ export const ORCHESTRATION_WS_METHODS = {
   getArchivedShellSnapshot: "orchestration.getArchivedShellSnapshot",
   subscribeShell: "orchestration.subscribeShell",
   subscribeThread: "orchestration.subscribeThread",
+  subscribeLane: "orchestration.subscribeLane",
+  getLaneDetail: "orchestration.getLaneDetail",
 } as const;
 
 export const ProviderApprovalPolicy = Schema.Literals([
@@ -381,6 +422,7 @@ export const OrchestrationReadModel = Schema.Struct({
   snapshotSequence: NonNegativeInt,
   projects: Schema.Array(OrchestrationProject),
   threads: Schema.Array(OrchestrationThread),
+  lanes: Schema.Array(WorkLane).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   updatedAt: IsoDateTime,
 });
 export type OrchestrationReadModel = typeof OrchestrationReadModel.Type;
@@ -430,6 +472,7 @@ export const OrchestrationShellSnapshot = Schema.Struct({
   snapshotSequence: NonNegativeInt,
   projects: Schema.Array(OrchestrationProjectShell),
   threads: Schema.Array(OrchestrationThreadShell),
+  lanes: Schema.Array(WorkLaneShell).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   updatedAt: IsoDateTime,
 });
 export type OrchestrationShellSnapshot = typeof OrchestrationShellSnapshot.Type;
@@ -454,6 +497,16 @@ export const OrchestrationShellStreamEvent = Schema.Union([
     kind: Schema.Literal("thread-removed"),
     sequence: NonNegativeInt,
     threadId: ThreadId,
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("lane-upserted"),
+    sequence: NonNegativeInt,
+    lane: WorkLaneShell,
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("lane-removed"),
+    sequence: NonNegativeInt,
+    laneId: WorkLaneId,
   }),
 ]);
 export type OrchestrationShellStreamEvent = typeof OrchestrationShellStreamEvent.Type;
@@ -505,6 +558,18 @@ export const OrchestrationSubscribeThreadInput = Schema.Struct({
   requestCompletionMarker: Schema.optionalKey(Schema.Boolean),
 });
 export type OrchestrationSubscribeThreadInput = typeof OrchestrationSubscribeThreadInput.Type;
+
+export const OrchestrationSubscribeLaneInput = Schema.Struct({
+  laneId: WorkLaneId,
+  afterSequence: Schema.optionalKey(NonNegativeInt),
+  requestCompletionMarker: Schema.optionalKey(Schema.Boolean),
+});
+export type OrchestrationSubscribeLaneInput = typeof OrchestrationSubscribeLaneInput.Type;
+
+export const OrchestrationGetLaneDetailInput = Schema.Struct({
+  laneId: WorkLaneId,
+});
+export type OrchestrationGetLaneDetailInput = typeof OrchestrationGetLaneDetailInput.Type;
 
 export const OrchestrationThreadDetailSnapshot = Schema.Struct({
   snapshotSequence: NonNegativeInt,
@@ -766,6 +831,28 @@ const DispatchableClientOrchestrationCommand = Schema.Union([
   ThreadUserInputRespondCommand,
   ThreadCheckpointRevertCommand,
   ThreadSessionStopCommand,
+  LaneCreateCommand,
+  LaneTaskContractUpdateCommand,
+  LanePreflightRequestCommand,
+  LaneOrientationRecordCommand,
+  LanePlanProposeCommand,
+  LanePlanActivateCommand,
+  LaneExecutionStartCommand,
+  LaneTestingStartCommand,
+  LaneReviewRequestCommand,
+  LaneDeliverableRegisterCommand,
+  LaneCompletionRequestCommand,
+  LaneBlockCommand,
+  LaneUnblockCommand,
+  LaneCancelCommand,
+  LaneSupersedeCommand,
+  LaneRecoveryRequestCommand,
+  LaneCompletionInvalidateCommand,
+  LaneFailCommand,
+  LaneMetaUpdateCommand,
+  SourceTruthPreflightRecordCommand,
+  SourceTruthConflictRecordCommand,
+  SourceTruthRefreshRequestCommand,
 ]);
 export type DispatchableClientOrchestrationCommand =
   typeof DispatchableClientOrchestrationCommand.Type;
@@ -791,6 +878,28 @@ export const ClientOrchestrationCommand = Schema.Union([
   ThreadUserInputRespondCommand,
   ThreadCheckpointRevertCommand,
   ThreadSessionStopCommand,
+  LaneCreateCommand,
+  LaneTaskContractUpdateCommand,
+  LanePreflightRequestCommand,
+  LaneOrientationRecordCommand,
+  LanePlanProposeCommand,
+  LanePlanActivateCommand,
+  LaneExecutionStartCommand,
+  LaneTestingStartCommand,
+  LaneReviewRequestCommand,
+  LaneDeliverableRegisterCommand,
+  LaneCompletionRequestCommand,
+  LaneBlockCommand,
+  LaneUnblockCommand,
+  LaneCancelCommand,
+  LaneSupersedeCommand,
+  LaneRecoveryRequestCommand,
+  LaneCompletionInvalidateCommand,
+  LaneFailCommand,
+  LaneMetaUpdateCommand,
+  SourceTruthPreflightRecordCommand,
+  SourceTruthConflictRecordCommand,
+  SourceTruthRefreshRequestCommand,
 ]);
 export type ClientOrchestrationCommand = typeof ClientOrchestrationCommand.Type;
 
@@ -903,10 +1012,21 @@ export const OrchestrationEventType = Schema.Literals([
   "thread.proposed-plan-upserted",
   "thread.turn-diff-completed",
   "thread.activity-appended",
+  "lane.created",
+  "lane.imported",
+  "lane.state-changed",
+  "lane.task-contract-updated",
+  "lane.meta-updated",
+  "lane.plan-proposed",
+  "lane.plan-activated",
+  "lane.deliverable-registered",
+  "source-truth.preflight-recorded",
+  "source-truth.conflict-recorded",
+  "source-truth.refresh-requested",
 ]);
 export type OrchestrationEventType = typeof OrchestrationEventType.Type;
 
-export const OrchestrationAggregateKind = Schema.Literals(["project", "thread"]);
+export const OrchestrationAggregateKind = Schema.Literals(["project", "thread", "lane"]);
 export type OrchestrationAggregateKind = typeof OrchestrationAggregateKind.Type;
 export const OrchestrationActorKind = Schema.Literals(["client", "server", "provider"]);
 
@@ -1119,7 +1239,7 @@ const EventBaseFields = {
   sequence: NonNegativeInt,
   eventId: EventId,
   aggregateKind: OrchestrationAggregateKind,
-  aggregateId: Schema.Union([ProjectId, ThreadId]),
+  aggregateId: Schema.Union([ProjectId, ThreadId, WorkLaneId]),
   occurredAt: IsoDateTime,
   commandId: Schema.NullOr(CommandId),
   causationEventId: Schema.NullOr(EventId),
@@ -1258,6 +1378,61 @@ export const OrchestrationEvent = Schema.Union([
     type: Schema.Literal("thread.activity-appended"),
     payload: ThreadActivityAppendedPayload,
   }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("lane.created"),
+    payload: LaneCreatedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("lane.imported"),
+    payload: LaneImportedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("lane.state-changed"),
+    payload: LaneStateChangedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("lane.task-contract-updated"),
+    payload: LaneTaskContractUpdatedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("lane.meta-updated"),
+    payload: LaneMetaUpdatedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("lane.plan-proposed"),
+    payload: LanePlanProposedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("lane.plan-activated"),
+    payload: LanePlanActivatedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("lane.deliverable-registered"),
+    payload: LaneDeliverableRegisteredPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("source-truth.preflight-recorded"),
+    payload: SourceTruthPreflightRecordedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("source-truth.conflict-recorded"),
+    payload: SourceTruthConflictRecordedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("source-truth.refresh-requested"),
+    payload: SourceTruthRefreshRequestedPayload,
+  }),
 ]);
 export type OrchestrationEvent = typeof OrchestrationEvent.Type;
 
@@ -1275,6 +1450,21 @@ export const OrchestrationThreadStreamItem = Schema.Union([
   }),
 ]);
 export type OrchestrationThreadStreamItem = typeof OrchestrationThreadStreamItem.Type;
+
+export const OrchestrationLaneStreamItem = Schema.Union([
+  Schema.Struct({
+    kind: Schema.Literal("synchronized"),
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("snapshot"),
+    snapshot: WorkLaneDetailSnapshot,
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("event"),
+    event: OrchestrationEvent,
+  }),
+]);
+export type OrchestrationLaneStreamItem = typeof OrchestrationLaneStreamItem.Type;
 
 export const OrchestrationCommandReceiptStatus = Schema.Literals(["accepted", "rejected"]);
 export type OrchestrationCommandReceiptStatus = typeof OrchestrationCommandReceiptStatus.Type;
@@ -1386,6 +1576,14 @@ export const OrchestrationRpcSchemas = {
   subscribeShell: {
     input: OrchestrationSubscribeShellInput,
     output: OrchestrationShellStreamItem,
+  },
+  subscribeLane: {
+    input: OrchestrationSubscribeLaneInput,
+    output: OrchestrationLaneStreamItem,
+  },
+  getLaneDetail: {
+    input: OrchestrationGetLaneDetailInput,
+    output: WorkLaneDetailSnapshot,
   },
 } as const;
 

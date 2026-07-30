@@ -9,6 +9,7 @@ const baseSnapshot: OrchestrationShellSnapshot = {
   snapshotSequence: 0,
   projects: [],
   threads: [],
+  lanes: [],
   updatedAt: "2026-04-01T00:00:00.000Z",
 };
 
@@ -181,5 +182,45 @@ describe("applyShellStreamEvent", () => {
     const unknownEvent = { kind: "unknown-future-event", sequence: 99 } as any;
     const next = applyShellStreamEvent(baseSnapshot, unknownEvent);
     expect(next).toBe(baseSnapshot);
+  });
+
+  describe("lane-upserted / lane-removed", () => {
+    const stubLane = {
+      id: "lane-1" as const,
+      projectId: ProjectId.make("project-1"),
+      title: "Lane",
+      state: "queued" as const,
+      priority: "normal" as const,
+      classification: "substantial" as const,
+      environmentId: "env-1" as const,
+      branch: null,
+      worktreePath: null,
+      sourceTruthRevisionId: null,
+      sourceTruthSummary: null,
+      primaryThreadId: null,
+      importedThreadId: null,
+      objectiveSummary: "Do the thing",
+      createdAt: "2026-04-01T00:00:00.000Z",
+      updatedAt: "2026-04-01T00:00:00.000Z",
+      completedAt: null,
+    };
+
+    it("adds and removes lanes while advancing sequence", () => {
+      const upserted = applyShellStreamEvent(baseSnapshot, {
+        kind: "lane-upserted",
+        sequence: 1,
+        lane: stubLane as never,
+      });
+      expect(upserted.lanes).toHaveLength(1);
+      expect(upserted.snapshotSequence).toBe(1);
+
+      const removed = applyShellStreamEvent(upserted, {
+        kind: "lane-removed",
+        sequence: 2,
+        laneId: stubLane.id as never,
+      });
+      expect(removed.lanes).toHaveLength(0);
+      expect(removed.snapshotSequence).toBe(2);
+    });
   });
 });

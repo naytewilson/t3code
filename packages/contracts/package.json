@@ -18,6 +18,14 @@
     "./relay": {
       "types": "./src/relay.ts",
       "import": "./src/relay.ts"
+    },
+    "./workLane": {
+      "types": "./src/workLane.ts",
+      "import": "./src/workLane.ts"
+    },
+    "./sourceTruth": {
+      "types": "./src/sourceTruth.ts",
+      "import": "./src/sourceTruth.ts"
     }
   },
   "scripts": {

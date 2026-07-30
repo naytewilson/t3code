@@ -5,11 +5,14 @@ import type {
   OrchestrationThread,
   ProjectId,
   ThreadId,
+  WorkLane,
+  WorkLaneId,
 } from "@t3tools/contracts";
 import { normalizeProjectPathForComparison } from "@t3tools/shared/path";
 import * as Effect from "effect/Effect";
 
 import { OrchestrationCommandInvariantError } from "./Errors.ts";
+import { isWorkLaneWorktreeOwningState } from "./workLaneTransitions.ts";
 
 function invariantError(commandType: string, detail: string): OrchestrationCommandInvariantError {
   return new OrchestrationCommandInvariantError({
@@ -179,6 +182,78 @@ export function requireNonNegativeInteger(input: {
     invariantError(
       input.commandType,
       `${input.field} must be an integer greater than or equal to 0.`,
+    ),
+  );
+}
+
+export function findLaneById(
+  readModel: OrchestrationReadModel,
+  laneId: WorkLaneId,
+): WorkLane | undefined {
+  return readModel.lanes.find((lane) => lane.id === laneId);
+}
+
+export function requireLane(input: {
+  readonly readModel: OrchestrationReadModel;
+  readonly command: OrchestrationCommand;
+  readonly laneId: WorkLaneId;
+}): Effect.Effect<WorkLane, OrchestrationCommandInvariantError> {
+  const lane = findLaneById(input.readModel, input.laneId);
+  if (lane) {
+    return Effect.succeed(lane);
+  }
+  return Effect.fail(
+    invariantError(
+      input.command.type,
+      `Lane '${input.laneId}' does not exist for command '${input.command.type}'.`,
+    ),
+  );
+}
+
+export function requireLaneAbsent(input: {
+  readonly readModel: OrchestrationReadModel;
+  readonly command: OrchestrationCommand;
+  readonly laneId: WorkLaneId;
+}): Effect.Effect<void, OrchestrationCommandInvariantError> {
+  if (!findLaneById(input.readModel, input.laneId)) {
+    return Effect.void;
+  }
+  return Effect.fail(
+    invariantError(
+      input.command.type,
+      `Lane '${input.laneId}' already exists and cannot be created twice.`,
+    ),
+  );
+}
+
+/**
+ * No other worktree-owning (non-terminal) lane may share the same worktree path.
+ * A null/empty path is treated as "no ownership claim" and always succeeds.
+ */
+export function requireWorktreeExclusive(input: {
+  readonly readModel: OrchestrationReadModel;
+  readonly command: OrchestrationCommand;
+  readonly worktreePath: string | null;
+  readonly exceptLaneId: WorkLaneId;
+}): Effect.Effect<void, OrchestrationCommandInvariantError> {
+  if (input.worktreePath === null || input.worktreePath.trim() === "") {
+    return Effect.void;
+  }
+  const normalizedPath = normalizeProjectPathForComparison(input.worktreePath);
+  const conflictingLane = input.readModel.lanes.find(
+    (lane) =>
+      lane.id !== input.exceptLaneId &&
+      lane.worktreePath !== null &&
+      isWorkLaneWorktreeOwningState(lane.state) &&
+      normalizeProjectPathForComparison(lane.worktreePath) === normalizedPath,
+  );
+  if (conflictingLane === undefined) {
+    return Effect.void;
+  }
+  return Effect.fail(
+    invariantError(
+      input.command.type,
+      `Worktree '${normalizedPath}' is already owned by lane '${conflictingLane.id}'.`,
     ),
   );
 }

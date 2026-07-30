@@ -108,6 +108,8 @@ describe("CheckpointDiffQuery.layer", () => {
             getThreadShellById: () => Effect.succeed(Option.none()),
             getThreadDetailById: () => Effect.succeed(Option.none()),
             getThreadDetailSnapshot: () => Effect.succeed(Option.none()),
+          getLaneShellById: () => Effect.succeed(Option.none()),
+          getLaneDetail: () => Effect.succeed(Option.none()),
           }),
         ),
       );
@@ -201,6 +203,8 @@ describe("CheckpointDiffQuery.layer", () => {
             getThreadShellById: () => Effect.succeed(Option.none()),
             getThreadDetailById: () => Effect.succeed(Option.none()),
             getThreadDetailSnapshot: () => Effect.succeed(Option.none()),
+          getLaneShellById: () => Effect.succeed(Option.none()),
+          getLaneDetail: () => Effect.succeed(Option.none()),
           }),
         ),
       );
@@ -284,6 +288,8 @@ describe("CheckpointDiffQuery.layer", () => {
             getThreadShellById: () => Effect.succeed(Option.none()),
             getThreadDetailById: () => Effect.succeed(Option.none()),
             getThreadDetailSnapshot: () => Effect.succeed(Option.none()),
+          getLaneShellById: () => Effect.succeed(Option.none()),
+          getLaneDetail: () => Effect.succeed(Option.none()),
           }),
         ),
       );
@@ -352,6 +358,8 @@ describe("CheckpointDiffQuery.layer", () => {
             getThreadShellById: () => Effect.succeed(Option.none()),
             getThreadDetailById: () => Effect.succeed(Option.none()),
             getThreadDetailSnapshot: () => Effect.succeed(Option.none()),
+          getLaneShellById: () => Effect.succeed(Option.none()),
+          getLaneDetail: () => Effect.succeed(Option.none()),
           }),
         ),
       );
@@ -405,6 +413,8 @@ describe("CheckpointDiffQuery.layer", () => {
             getThreadShellById: () => Effect.succeed(Option.none()),
             getThreadDetailById: () => Effect.succeed(Option.none()),
             getThreadDetailSnapshot: () => Effect.succeed(Option.none()),
+          getLaneShellById: () => Effect.succeed(Option.none()),
+          getLaneDetail: () => Effect.succeed(Option.none()),
           }),
         ),
       );

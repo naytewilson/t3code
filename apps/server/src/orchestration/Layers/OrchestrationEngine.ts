@@ -3,6 +3,7 @@ import type {
   OrchestrationReadModel,
   ProjectId,
   ThreadId,
+  WorkLaneId,
 } from "@t3tools/contracts";
 import { OrchestrationCommand } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -57,8 +58,8 @@ interface CommandEnvelope {
 }
 
 function commandToAggregateRef(command: OrchestrationCommand): {
-  readonly aggregateKind: "project" | "thread";
-  readonly aggregateId: ProjectId | ThreadId;
+  readonly aggregateKind: "project" | "thread" | "lane";
+  readonly aggregateId: ProjectId | ThreadId | WorkLaneId;
 } {
   switch (command.type) {
     case "project.create":
@@ -67,6 +68,32 @@ function commandToAggregateRef(command: OrchestrationCommand): {
       return {
         aggregateKind: "project",
         aggregateId: command.projectId,
+      };
+    case "lane.create":
+    case "lane.task-contract.update":
+    case "lane.preflight.request":
+    case "lane.orientation.record":
+    case "lane.plan.propose":
+    case "lane.plan.activate":
+    case "lane.execution.start":
+    case "lane.testing.start":
+    case "lane.review.request":
+    case "lane.deliverable.register":
+    case "lane.completion.request":
+    case "lane.block":
+    case "lane.unblock":
+    case "lane.cancel":
+    case "lane.supersede":
+    case "lane.recovery.request":
+    case "lane.completion.invalidate":
+    case "lane.fail":
+    case "lane.meta.update":
+    case "source-truth.preflight.record":
+    case "source-truth.conflict.record":
+    case "source-truth.refresh.request":
+      return {
+        aggregateKind: "lane",
+        aggregateId: command.laneId,
       };
     default:
       return {
