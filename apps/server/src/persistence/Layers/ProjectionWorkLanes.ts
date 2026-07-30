@@ -87,6 +87,7 @@ const makeProjectionWorkLaneRepository = Effect.gen(function* () {
           updated_at = excluded.updated_at,
           completed_at = excluded.completed_at,
           last_sequence = excluded.last_sequence
+        WHERE excluded.last_sequence >= projection_work_lanes.last_sequence
       `,
   });
 

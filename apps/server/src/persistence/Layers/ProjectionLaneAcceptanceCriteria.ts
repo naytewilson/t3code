@@ -46,6 +46,7 @@ const makeProjectionLaneAcceptanceCriterionRepository = Effect.gen(function* () 
           lane_id = excluded.lane_id,
           criterion_json = excluded.criterion_json,
           last_sequence = excluded.last_sequence
+        WHERE excluded.last_sequence >= projection_lane_acceptance_criteria.last_sequence
       `,
   });
 

@@ -57,6 +57,8 @@ describe("workLane contracts", () => {
       advisorAssignmentIds: [],
       verifierAssignmentIds: [],
       sourceTruthRevisionId: null,
+      sourceTruthActiveGitOperation: "none",
+      sourceTruthOwnershipOverlap: "unknown",
       activePlanRevisionId: null,
       acceptanceCriterionIds: [],
       requiredReceiptKinds: [],
@@ -67,6 +69,7 @@ describe("workLane contracts", () => {
       threadIds: [],
       legacyExecutorRef: null,
       resumeState: null,
+      supersedingLaneId: null,
       createdAt: "2026-07-30T00:00:00.000Z",
       updatedAt: "2026-07-30T00:00:00.000Z",
       completedAt: null,
@@ -79,6 +82,21 @@ describe("workLane contracts", () => {
 
   it("rejects invalid lifecycle states", () => {
     assert.throws(() => Schema.decodeUnknownSync(WorkLaneState)("done"));
+  });
+
+  it("defaults objectiveDerivation to UNKNOWN when omitted", () => {
+    const contract = decodeTaskContract({
+      objective: "x",
+      constraints: [],
+      nonGoals: [],
+      deliverableRequirement: "none",
+      requiresPullRequest: false,
+      requiresUserVisibleSurface: false,
+      authorizedActions: [],
+      prohibitedActions: [],
+      completionReportRequired: true,
+    });
+    assert.strictEqual(contract.objectiveDerivation, "UNKNOWN");
   });
 
   it("rejects untyped permission blobs on task contracts", () => {

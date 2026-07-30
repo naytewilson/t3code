@@ -1,4 +1,5 @@
 import {
+  AcceptanceCriterionId,
   CommandId,
   DeliverableId,
   EnvironmentId,
@@ -62,6 +63,8 @@ function makeWorkLane(overrides: Partial<WorkLane> = {}): WorkLane {
     advisorAssignmentIds: [],
     verifierAssignmentIds: [],
     sourceTruthRevisionId: null,
+    sourceTruthActiveGitOperation: "none",
+    sourceTruthOwnershipOverlap: "unknown",
     activePlanRevisionId: null,
     acceptanceCriterionIds: [],
     requiredReceiptKinds: [],
@@ -72,6 +75,7 @@ function makeWorkLane(overrides: Partial<WorkLane> = {}): WorkLane {
     threadIds: [],
     legacyExecutorRef: null,
     resumeState: null,
+    supersedingLaneId: null,
     createdAt: NOW,
     updatedAt: NOW,
     completedAt: null,
@@ -306,7 +310,7 @@ it.layer(NodeServices.layer)("work lane decider", (it) => {
           }),
         ]),
       }).pipe(Effect.flip);
-      expectInvariant(queuedError, "must be in 'planned' state");
+      expectInvariant(queuedError, "must be in planned|testing|reviewing|deliverable-ready");
 
       const orientedToTesting = yield* decideOrchestrationCommand({
         command: {
@@ -632,13 +636,17 @@ it.layer(NodeServices.layer)("work lane decider", (it) => {
             commandId: CommandId.make("cmd-supersede"),
             laneId: LANE_ID,
             supersededAt: NOW,
+            supersedingLaneId: WorkLaneId.make("lane-replacement"),
           },
           readModel: makeReadModel([makeWorkLane({ state: "planned" })]),
         }),
       );
-      expect(payloadOf<{ toState: string }>(superseded[0], "lane.state-changed").toState).toBe(
-        "superseded",
-      );
+      const supersededPayload = payloadOf<{
+        toState: string;
+        supersedingLaneId?: string;
+      }>(superseded[0], "lane.state-changed");
+      expect(supersededPayload.toState).toBe("superseded");
+      expect(supersededPayload.supersedingLaneId).toBe("lane-replacement");
 
       const recovered = asEvents(
         yield* decideOrchestrationCommand({
@@ -654,6 +662,310 @@ it.layer(NodeServices.layer)("work lane decider", (it) => {
       expect(payloadOf<{ toState: string }>(recovered[0], "lane.state-changed").toState).toBe(
         "preflight",
       );
+    }),
+  );
+
+  it.effect("allows two queued lanes to share a worktree until one owns it", () =>
+    Effect.gen(function* () {
+      const otherLaneId = WorkLaneId.make("lane-2");
+      const revisionId = SourceTruthRevisionId.make("str-1");
+      const otherRevisionId = SourceTruthRevisionId.make("str-2");
+      const shared = makeReadModel([
+        makeWorkLane({
+          id: LANE_ID,
+          state: "queued",
+          worktreePath: WORKTREE,
+        }),
+        makeWorkLane({
+          id: otherLaneId,
+          state: "queued",
+          worktreePath: WORKTREE,
+        }),
+      ]);
+
+      const firstStart = asEvents(
+        yield* decideOrchestrationCommand({
+          command: {
+            type: "lane.execution.start",
+            commandId: CommandId.make("cmd-first-exec"),
+            laneId: LANE_ID,
+            startedAt: NOW,
+          },
+          readModel: makeReadModel([
+            makeWorkLane({
+              id: LANE_ID,
+              state: "planned",
+              worktreePath: WORKTREE,
+              sourceTruthRevisionId: revisionId,
+              sourceTruthActiveGitOperation: "none",
+              sourceTruthOwnershipOverlap: "exclusive",
+            }),
+            makeWorkLane({
+              id: otherLaneId,
+              state: "queued",
+              worktreePath: WORKTREE,
+            }),
+          ]),
+        }),
+      );
+      expect(payloadOf<{ toState: string }>(firstStart[0], "lane.state-changed").toState).toBe(
+        "executing",
+      );
+
+      const secondBlocked = yield* decideOrchestrationCommand({
+        command: {
+          type: "lane.execution.start",
+          commandId: CommandId.make("cmd-second-exec"),
+          laneId: otherLaneId,
+          startedAt: NOW,
+        },
+        readModel: makeReadModel([
+          makeWorkLane({
+            id: LANE_ID,
+            state: "executing",
+            worktreePath: WORKTREE,
+            sourceTruthRevisionId: revisionId,
+          }),
+          makeWorkLane({
+            id: otherLaneId,
+            state: "planned",
+            worktreePath: WORKTREE,
+            sourceTruthRevisionId: otherRevisionId,
+            sourceTruthActiveGitOperation: "none",
+            sourceTruthOwnershipOverlap: "exclusive",
+          }),
+        ]),
+      }).pipe(Effect.flip);
+      expectInvariant(secondBlocked, "already owned by lane");
+
+      // Soft-state meta path updates remain allowed while neither owns exclusively.
+      const metaOk = asEvents(
+        yield* decideOrchestrationCommand({
+          command: {
+            type: "lane.meta.update",
+            commandId: CommandId.make("cmd-meta-soft"),
+            laneId: otherLaneId,
+            worktreePath: WORKTREE,
+            updatedAt: LATER,
+          },
+          readModel: shared,
+        }),
+      );
+      expect(metaOk[0]?.type).toBe("lane.meta-updated");
+    }),
+  );
+
+  it.effect("enforces exclusivity on meta.update while owning and on invalidate re-entry", () =>
+    Effect.gen(function* () {
+      const otherLaneId = WorkLaneId.make("lane-2");
+      const metaConflict = yield* decideOrchestrationCommand({
+        command: {
+          type: "lane.meta.update",
+          commandId: CommandId.make("cmd-meta-owning"),
+          laneId: otherLaneId,
+          worktreePath: WORKTREE,
+          updatedAt: LATER,
+        },
+        readModel: makeReadModel([
+          makeWorkLane({
+            id: LANE_ID,
+            state: "executing",
+            worktreePath: WORKTREE,
+          }),
+          makeWorkLane({
+            id: otherLaneId,
+            state: "testing",
+            worktreePath: "/tmp/other",
+          }),
+        ]),
+      }).pipe(Effect.flip);
+      expectInvariant(metaConflict, "already owned by lane");
+
+      const invalidateConflict = yield* decideOrchestrationCommand({
+        command: {
+          type: "lane.completion.invalidate",
+          commandId: CommandId.make("cmd-invalidate-exclusive"),
+          laneId: otherLaneId,
+          reason: "reopen",
+          invalidatedAt: LATER,
+        },
+        readModel: makeReadModel([
+          makeWorkLane({
+            id: LANE_ID,
+            state: "executing",
+            worktreePath: WORKTREE,
+          }),
+          makeWorkLane({
+            id: otherLaneId,
+            state: "completed",
+            worktreePath: WORKTREE,
+            completedAt: NOW,
+          }),
+        ]),
+      }).pipe(Effect.flip);
+      expectInvariant(invalidateConflict, "already owned by lane");
+    }),
+  );
+
+  it.effect("allows execution.start re-entry from testing/reviewing/deliverable-ready", () =>
+    Effect.gen(function* () {
+      for (const state of ["testing", "reviewing", "deliverable-ready"] as const) {
+        const decided = asEvents(
+          yield* decideOrchestrationCommand({
+            command: {
+              type: "lane.execution.start",
+              commandId: CommandId.make(`cmd-reenter-${state}`),
+              laneId: LANE_ID,
+              startedAt: NOW,
+            },
+            readModel: makeReadModel([
+              makeWorkLane({
+                state,
+                sourceTruthRevisionId: SourceTruthRevisionId.make("str-1"),
+                sourceTruthActiveGitOperation: "none",
+                sourceTruthOwnershipOverlap: "exclusive",
+              }),
+            ]),
+          }),
+        );
+        const payload = payloadOf<{ fromState: string; toState: string }>(
+          decided[0],
+          "lane.state-changed",
+        );
+        expect(payload.fromState).toBe(state);
+        expect(payload.toState).toBe("executing");
+      }
+    }),
+  );
+
+  it.effect("rejects execution.start when preflight gate fields are unsafe", () =>
+    Effect.gen(function* () {
+      const overlap = yield* decideOrchestrationCommand({
+        command: {
+          type: "lane.execution.start",
+          commandId: CommandId.make("cmd-overlap"),
+          laneId: LANE_ID,
+          startedAt: NOW,
+        },
+        readModel: makeReadModel([
+          makeWorkLane({
+            state: "planned",
+            sourceTruthRevisionId: SourceTruthRevisionId.make("str-1"),
+            sourceTruthOwnershipOverlap: "overlap",
+          }),
+        ]),
+      }).pipe(Effect.flip);
+      expectInvariant(overlap, "ownership overlap is 'overlap'");
+
+      const gitOp = yield* decideOrchestrationCommand({
+        command: {
+          type: "lane.execution.start",
+          commandId: CommandId.make("cmd-rebase"),
+          laneId: LANE_ID,
+          startedAt: NOW,
+        },
+        readModel: makeReadModel([
+          makeWorkLane({
+            state: "planned",
+            sourceTruthRevisionId: SourceTruthRevisionId.make("str-1"),
+            sourceTruthActiveGitOperation: "rebase",
+            sourceTruthOwnershipOverlap: "exclusive",
+          }),
+        ]),
+      }).pipe(Effect.flip);
+      expectInvariant(gitOp, "git operation 'rebase' is active");
+    }),
+  );
+
+  it.effect("rejects duplicate source-truth revision ids and terminal mutations", () =>
+    Effect.gen(function* () {
+      const revisionId = SourceTruthRevisionId.make("str-dup");
+      const duplicateCurrent = yield* decideOrchestrationCommand({
+        command: {
+          type: "source-truth.preflight.record",
+          commandId: CommandId.make("cmd-dup-current"),
+          laneId: LANE_ID,
+          revision: makeSourceTruthRevision({ id: revisionId }),
+          recordedAt: NOW,
+        },
+        readModel: makeReadModel([
+          makeWorkLane({
+            state: "planned",
+            sourceTruthRevisionId: revisionId,
+          }),
+        ]),
+      }).pipe(Effect.flip);
+      expectInvariant(duplicateCurrent, "already current");
+
+      const otherLaneId = WorkLaneId.make("lane-2");
+      const duplicateExists = yield* decideOrchestrationCommand({
+        command: {
+          type: "source-truth.preflight.record",
+          commandId: CommandId.make("cmd-dup-exists"),
+          laneId: LANE_ID,
+          revision: makeSourceTruthRevision({ id: revisionId }),
+          recordedAt: NOW,
+        },
+        readModel: makeReadModel([
+          makeWorkLane({
+            id: LANE_ID,
+            state: "planned",
+            sourceTruthRevisionId: SourceTruthRevisionId.make("str-other"),
+          }),
+          makeWorkLane({
+            id: otherLaneId,
+            state: "queued",
+            sourceTruthRevisionId: revisionId,
+          }),
+        ]),
+      }).pipe(Effect.flip);
+      expectInvariant(duplicateExists, "already exists");
+
+      for (const state of ["completed", "cancelled", "superseded"] as const) {
+        const terminalMeta = yield* decideOrchestrationCommand({
+          command: {
+            type: "lane.meta.update",
+            commandId: CommandId.make(`cmd-terminal-meta-${state}`),
+            laneId: LANE_ID,
+            title: "nope",
+            updatedAt: LATER,
+          },
+          readModel: makeReadModel([makeWorkLane({ state })]),
+        }).pipe(Effect.flip);
+        expectInvariant(terminalMeta, "is terminal");
+      }
+    }),
+  );
+
+  it.effect("rejects acceptance criteria whose laneId does not match create", () =>
+    Effect.gen(function* () {
+      const error = yield* decideOrchestrationCommand({
+        command: {
+          type: "lane.create",
+          commandId: CommandId.make("cmd-bad-criterion"),
+          laneId: LANE_ID,
+          projectId: PROJECT_ID,
+          title: "Lane",
+          taskContract: makeTaskContract(),
+          priority: "normal",
+          classification: "substantial",
+          environmentId: ENV_ID,
+          createdAt: NOW,
+          acceptanceCriteria: [
+            {
+              id: AcceptanceCriterionId.make("crit-1"),
+              laneId: WorkLaneId.make("lane-other"),
+              description: "wrong lane",
+              category: "correctness",
+              required: true,
+              status: "pending",
+              supportingReceiptIds: [],
+            },
+          ],
+        },
+        readModel: makeReadModel(),
+      }).pipe(Effect.flip);
+      expectInvariant(error, "does not match lane");
     }),
   );
 });

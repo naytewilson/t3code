@@ -1,24 +1,23 @@
 // @effect-diagnostics nodeBuiltinImport:off
 // @effect-diagnostics preferSchemaOverJson:off
+// @effect-diagnostics globalErrorInEffectFailure:off
+// @effect-diagnostics globalDateInEffect:off
 /**
  * Migration 035 — work-lane / source-truth projection tables + legacy thread import.
  *
- * Reads the persisted environment-id file when ServerConfig is available; otherwise
- * stamps `unknown-environment`. JSON payloads are written as TEXT for the event
- * store / projection tables (same shape as other projectors).
+ * Requires ServerConfig with a readable environmentIdPath so imported lanes stamp a
+ * real environment id. Archived threads are skipped. After import, stamps
+ * `projection.work-lanes` projection_state to MAX(orchestration_events.sequence).
  */
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as fs from "node:fs";
-import * as path from "node:path";
 
 import { ServerConfig } from "../../config.ts";
 
 const ACTIVE_SESSION_STATUSES = new Set(["starting", "running", "ready", "interrupted", "error"]);
-
-const UNKNOWN_ENVIRONMENT_ID = "unknown-environment";
 
 type ImportThreadRow = {
   readonly threadId: string;
@@ -46,41 +45,55 @@ const readEnvironmentIdFromPath = (environmentIdPath: string): string | null => 
 
 const resolveEnvironmentId = Effect.gen(function* () {
   const configOption = yield* Effect.serviceOption(ServerConfig);
-  if (Option.isSome(configOption)) {
-    const environmentIdPath = configOption.value.environmentIdPath;
-    const fileSystemOption = yield* Effect.serviceOption(FileSystem.FileSystem);
-    if (Option.isSome(fileSystemOption)) {
-      const exists = yield* fileSystemOption.value
-        .exists(environmentIdPath)
-        .pipe(Effect.orElseSucceed(() => false));
-      if (exists) {
-        const raw = yield* fileSystemOption.value.readFileString(environmentIdPath).pipe(
-          Effect.map((value) => value.trim()),
-          Effect.orElseSucceed(() => ""),
-        );
-        if (raw.length > 0) {
-          return raw;
-        }
-      }
-    } else {
-      const fromDisk = readEnvironmentIdFromPath(environmentIdPath);
-      if (fromDisk !== null) {
-        return fromDisk;
-      }
-    }
+  if (Option.isNone(configOption)) {
+    return yield* Effect.fail(
+      new Error(
+        "Migration 035_WorkLanesAndSourceTruth requires ServerConfig with a readable environmentIdPath",
+      ),
+    );
   }
 
-  const home = process.env.T3CODE_HOME;
-  if (typeof home === "string" && home.length > 0) {
-    for (const relative of ["userdata/environment-id", "dev/environment-id", "environment-id"]) {
-      const fromDisk = readEnvironmentIdFromPath(path.join(home, relative));
-      if (fromDisk !== null) {
-        return fromDisk;
-      }
+  const environmentIdPath = configOption.value.environmentIdPath;
+  const fileSystemOption = yield* Effect.serviceOption(FileSystem.FileSystem);
+  if (Option.isSome(fileSystemOption)) {
+    const exists = yield* fileSystemOption.value
+      .exists(environmentIdPath)
+      .pipe(Effect.orElseSucceed(() => false));
+    if (!exists) {
+      return yield* Effect.fail(
+        new Error(
+          `Migration 035_WorkLanesAndSourceTruth: environment id file missing at '${environmentIdPath}'`,
+        ),
+      );
     }
+    const raw = yield* fileSystemOption.value.readFileString(environmentIdPath).pipe(
+      Effect.map((value) => value.trim()),
+      Effect.mapError(
+        (cause) =>
+          new Error(
+            `Migration 035_WorkLanesAndSourceTruth: failed to read environment id at '${environmentIdPath}': ${String(cause)}`,
+          ),
+      ),
+    );
+    if (raw.length === 0) {
+      return yield* Effect.fail(
+        new Error(
+          `Migration 035_WorkLanesAndSourceTruth: environment id file at '${environmentIdPath}' is empty`,
+        ),
+      );
+    }
+    return raw;
   }
 
-  return UNKNOWN_ENVIRONMENT_ID;
+  const fromDisk = readEnvironmentIdFromPath(environmentIdPath);
+  if (fromDisk === null) {
+    return yield* Effect.fail(
+      new Error(
+        `Migration 035_WorkLanesAndSourceTruth: environment id file missing or unreadable at '${environmentIdPath}'`,
+      ),
+    );
+  }
+  return fromDisk;
 });
 
 function importStateForSession(sessionStatus: string | null): "queued" | "recovery-required" {
@@ -139,7 +152,10 @@ function buildImportedLanePayload(input: {
     advisorAssignmentIds: [],
     verifierAssignmentIds: [],
     sourceTruthRevisionId: null,
+    sourceTruthActiveGitOperation: "none" as const,
+    sourceTruthOwnershipOverlap: "unknown" as const,
     activePlanRevisionId: null,
+    supersedingLaneId: null,
     acceptanceCriterionIds: [],
     requiredReceiptKinds: [],
     deliverableIds: [],
@@ -256,6 +272,7 @@ export default Effect.gen(function* () {
     LEFT JOIN projection_thread_sessions s
       ON s.thread_id = t.thread_id
     WHERE t.deleted_at IS NULL
+      AND t.archived_at IS NULL
       AND NOT EXISTS (
         SELECT 1
         FROM projection_work_lanes wl
@@ -374,4 +391,27 @@ export default Effect.gen(function* () {
       ON CONFLICT (id) DO NOTHING
     `;
   }
+
+  const maxSequenceRows = yield* sql<{ readonly maxSequence: number | null }>`
+    SELECT MAX(sequence) AS "maxSequence"
+    FROM orchestration_events
+  `;
+  const lastAppliedSequence = maxSequenceRows[0]?.maxSequence ?? 0;
+  const stampedAt = new Date().toISOString();
+
+  yield* sql`
+    INSERT INTO projection_state (
+      projector,
+      last_applied_sequence,
+      updated_at
+    )
+    VALUES (
+      'projection.work-lanes',
+      ${lastAppliedSequence},
+      ${stampedAt}
+    )
+    ON CONFLICT (projector) DO UPDATE SET
+      last_applied_sequence = excluded.last_applied_sequence,
+      updated_at = excluded.updated_at
+  `;
 });

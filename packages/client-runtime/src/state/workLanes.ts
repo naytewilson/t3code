@@ -40,8 +40,9 @@ export function workLaneShellsFromSnapshot(
 }
 
 /**
- * Apply a lane detail stream item. Snapshot replaces local detail; events are
- * expected to be handled by reloading detail or by shell upserts for list views.
+ * Apply a lane detail stream item. Snapshot replaces local detail; events advance
+ * snapshotSequence so reconnect cursors do not ignore progress while bodies are
+ * reloaded separately.
  */
 export function applyLaneStreamItem(
   current: WorkLaneDetailSnapshot | null,
@@ -53,8 +54,16 @@ export function applyLaneStreamItem(
     case "synchronized":
       return current;
     case "event":
-      // Detail bodies are reloaded after sequence catch-up; keep current until then.
-      return current;
+      if (current === null) {
+        return null;
+      }
+      if (item.event.sequence <= current.snapshotSequence) {
+        return current;
+      }
+      return {
+        ...current,
+        snapshotSequence: item.event.sequence,
+      };
     default:
       return current;
   }

@@ -4,6 +4,7 @@ import { ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import type { OrchestrationShellSnapshot, OrchestrationShellStreamEvent } from "@t3tools/contracts";
 
 import { applyShellStreamEvent } from "./shellReducer.ts";
+import { applyLaneStreamItem } from "./workLanes.ts";
 
 const baseSnapshot: OrchestrationShellSnapshot = {
   snapshotSequence: 0,
@@ -222,5 +223,71 @@ describe("applyShellStreamEvent", () => {
       expect(removed.lanes).toHaveLength(0);
       expect(removed.snapshotSequence).toBe(2);
     });
+  });
+});
+
+describe("applyLaneStreamItem", () => {
+  it("advances snapshotSequence on stream events", () => {
+    const current = {
+      snapshotSequence: 4,
+      detail: {
+        lane: {
+          id: "lane-1",
+          projectId: ProjectId.make("project-1"),
+          title: "Lane",
+          taskContract: {
+            objective: "x",
+            constraints: [],
+            nonGoals: [],
+            deliverableRequirement: "none" as const,
+            requiresPullRequest: false,
+            requiresUserVisibleSurface: false,
+            authorizedActions: [],
+            prohibitedActions: [],
+            completionReportRequired: true,
+            objectiveDerivation: "UNKNOWN" as const,
+          },
+          state: "queued" as const,
+          priority: "normal" as const,
+          classification: "substantial" as const,
+          environmentId: "env-1",
+          repositoryIdentity: null,
+          baseRef: null,
+          branch: null,
+          worktreePath: null,
+          ownerAssignmentId: null,
+          advisorAssignmentIds: [],
+          verifierAssignmentIds: [],
+          sourceTruthRevisionId: null,
+          sourceTruthActiveGitOperation: "none" as const,
+          sourceTruthOwnershipOverlap: "unknown" as const,
+          activePlanRevisionId: null,
+          supersedingLaneId: null,
+          acceptanceCriterionIds: [],
+          requiredReceiptKinds: [],
+          deliverableIds: [],
+          blockerIds: [],
+          primaryThreadId: null,
+          importedThreadId: null,
+          threadIds: [],
+          legacyExecutorRef: null,
+          resumeState: null,
+          createdAt: "2026-04-01T00:00:00.000Z",
+          updatedAt: "2026-04-01T00:00:00.000Z",
+          completedAt: null,
+        },
+        acceptanceCriteria: [],
+        sourceTruthRevisions: [],
+      },
+    } as const;
+
+    const next = applyLaneStreamItem(current as never, {
+      kind: "event",
+      event: {
+        sequence: 9,
+        type: "lane.meta-updated",
+      } as never,
+    });
+    expect(next?.snapshotSequence).toBe(9);
   });
 });

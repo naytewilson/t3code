@@ -55,6 +55,8 @@ function makeWorkLane(overrides: Partial<WorkLane> = {}): WorkLane {
     advisorAssignmentIds: [],
     verifierAssignmentIds: [],
     sourceTruthRevisionId: null,
+    sourceTruthActiveGitOperation: "none",
+    sourceTruthOwnershipOverlap: "unknown",
     activePlanRevisionId: null,
     acceptanceCriterionIds: [],
     requiredReceiptKinds: [],
@@ -65,6 +67,7 @@ function makeWorkLane(overrides: Partial<WorkLane> = {}): WorkLane {
     threadIds: [],
     legacyExecutorRef: null,
     resumeState: null,
+    supersedingLaneId: null,
     createdAt: NOW,
     updatedAt: NOW,
     completedAt: null,
@@ -179,6 +182,8 @@ it.effect("replays lane.created + state-changed + preflight-recorded determinist
     expect(firstPass.lanes).toHaveLength(1);
     expect(firstPass.lanes[0]?.state).toBe("preflight");
     expect(firstPass.lanes[0]?.sourceTruthRevisionId).toBe(revision.id);
+    expect(firstPass.lanes[0]?.sourceTruthActiveGitOperation).toBe(revision.activeGitOperation);
+    expect(firstPass.lanes[0]?.sourceTruthOwnershipOverlap).toBe(revision.ownershipOverlap);
     expect(firstPass.lanes[0]?.updatedAt).toBe(LATER);
   }),
 );

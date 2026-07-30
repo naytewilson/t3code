@@ -805,21 +805,33 @@ export function projectEvent(
 
     case "lane.state-changed":
       return decodeForEvent(LaneStateChangedPayload, event.payload, event.type, "payload").pipe(
-        Effect.map((payload) => ({
-          ...nextBase,
-          lanes: updateLane(nextBase.lanes, payload.laneId, {
-            state: payload.toState,
-            resumeState: payload.resumeState,
-            updatedAt: payload.updatedAt,
-            completedAt:
-              payload.toState === "completed"
-                ? payload.updatedAt
-                : payload.fromState === "completed"
-                  ? null
-                  : (nextBase.lanes.find((lane) => lane.id === payload.laneId)?.completedAt ??
-                    null),
-          }),
-        })),
+        Effect.map((payload) => {
+          const existing = nextBase.lanes.find((lane) => lane.id === payload.laneId);
+          const blockerIds =
+            payload.blockerId === undefined || existing === undefined
+              ? existing?.blockerIds
+              : existing.blockerIds.includes(payload.blockerId)
+                ? existing.blockerIds
+                : [...existing.blockerIds, payload.blockerId];
+          return {
+            ...nextBase,
+            lanes: updateLane(nextBase.lanes, payload.laneId, {
+              state: payload.toState,
+              resumeState: payload.resumeState,
+              updatedAt: payload.updatedAt,
+              ...(blockerIds !== undefined ? { blockerIds } : {}),
+              ...(payload.supersedingLaneId !== undefined
+                ? { supersedingLaneId: payload.supersedingLaneId }
+                : {}),
+              completedAt:
+                payload.toState === "completed"
+                  ? payload.updatedAt
+                  : payload.fromState === "completed"
+                    ? null
+                    : (existing?.completedAt ?? null),
+            }),
+          };
+        }),
       );
 
     case "lane.task-contract-updated":
@@ -916,6 +928,8 @@ export function projectEvent(
           ...nextBase,
           lanes: updateLane(nextBase.lanes, payload.laneId, {
             sourceTruthRevisionId: payload.revision.id,
+            sourceTruthActiveGitOperation: payload.revision.activeGitOperation,
+            sourceTruthOwnershipOverlap: payload.revision.ownershipOverlap,
             updatedAt: payload.recordedAt,
           }),
         })),

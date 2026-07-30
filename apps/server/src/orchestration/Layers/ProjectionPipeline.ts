@@ -1606,11 +1606,21 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           const lane = existing.value.lane;
           let next = lane;
           switch (event.type) {
-            case "lane.state-changed":
+            case "lane.state-changed": {
+              const blockerIds =
+                event.payload.blockerId === undefined
+                  ? lane.blockerIds
+                  : lane.blockerIds.includes(event.payload.blockerId)
+                    ? lane.blockerIds
+                    : [...lane.blockerIds, event.payload.blockerId];
               next = {
                 ...lane,
                 state: event.payload.toState,
                 resumeState: event.payload.resumeState,
+                blockerIds,
+                ...(event.payload.supersedingLaneId !== undefined
+                  ? { supersedingLaneId: event.payload.supersedingLaneId }
+                  : {}),
                 updatedAt: event.payload.updatedAt,
                 completedAt:
                   event.payload.toState === "completed"
@@ -1620,6 +1630,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
                       : lane.completedAt,
               };
               break;
+            }
             case "lane.task-contract-updated":
               next = {
                 ...lane,
@@ -1713,6 +1724,8 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
                 {
                   ...existing.value.lane,
                   sourceTruthRevisionId: event.payload.revision.id,
+                  sourceTruthActiveGitOperation: event.payload.revision.activeGitOperation,
+                  sourceTruthOwnershipOverlap: event.payload.revision.ownershipOverlap,
                   updatedAt: event.payload.recordedAt,
                 },
                 event.sequence,

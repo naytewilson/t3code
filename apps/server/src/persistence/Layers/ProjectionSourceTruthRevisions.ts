@@ -52,6 +52,7 @@ const makeProjectionSourceTruthRevisionRepository = Effect.gen(function* () {
           produced_at = excluded.produced_at,
           superseded_at = excluded.superseded_at,
           last_sequence = excluded.last_sequence
+        WHERE excluded.last_sequence >= projection_source_truth_revisions.last_sequence
       `,
   });
 

@@ -20,7 +20,13 @@ import {
   WorkLaneId,
 } from "./baseSchemas.ts";
 import { RepositoryIdentity } from "./environment.ts";
-import { ClaimLabel, SourceTruthRevision, SourceTruthRevisionShellSummary } from "./sourceTruth.ts";
+import {
+  ClaimLabel,
+  GitOperationState,
+  SourceTruthRevision,
+  SourceTruthRevisionShellSummary,
+  WorktreeOwnershipOverlapResult,
+} from "./sourceTruth.ts";
 
 export const WorkLaneState = Schema.Literals([
   "queued",
@@ -56,12 +62,12 @@ export const WORK_LANE_TERMINAL_STATES = [
   "superseded",
 ] as const satisfies ReadonlyArray<WorkLaneState>;
 
-/** States that still own a worktree for exclusive-ownership checks. */
+/**
+ * States that claim exclusive worktree ownership.
+ * Soft lifecycle states (queued…planned) may share a path; exclusivity applies
+ * once a lane is actively executing or in recovery-bound owning states.
+ */
 export const WORK_LANE_WORKTREE_OWNING_STATES = [
-  "queued",
-  "preflight",
-  "oriented",
-  "planned",
   "executing",
   "testing",
   "reviewing",
@@ -69,6 +75,13 @@ export const WORK_LANE_WORKTREE_OWNING_STATES = [
   "blocked",
   "failed",
   "recovery-required",
+] as const satisfies ReadonlyArray<WorkLaneState>;
+
+export const WORK_LANE_EXECUTION_START_STATES = [
+  "planned",
+  "testing",
+  "reviewing",
+  "deliverable-ready",
 ] as const satisfies ReadonlyArray<WorkLaneState>;
 
 export const WORK_LANE_NORMAL_TRANSITIONS: Readonly<
@@ -169,7 +182,7 @@ export const TaskContract = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(true as const)),
   ),
   objectiveDerivation: ClaimLabel.pipe(
-    Schema.withDecodingDefault(Effect.succeed("PROVEN" as const)),
+    Schema.withDecodingDefault(Effect.succeed("UNKNOWN" as const)),
   ),
 });
 export type TaskContract = typeof TaskContract.Type;
@@ -258,7 +271,17 @@ export const WorkLane = Schema.Struct({
   sourceTruthRevisionId: Schema.NullOr(SourceTruthRevisionId).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
+  /** Compact preflight gate fields — avoids loading full revision bodies into the command RM. */
+  sourceTruthActiveGitOperation: GitOperationState.pipe(
+    Schema.withDecodingDefault(Effect.succeed("none" as const)),
+  ),
+  sourceTruthOwnershipOverlap: WorktreeOwnershipOverlapResult.pipe(
+    Schema.withDecodingDefault(Effect.succeed("unknown" as const)),
+  ),
   activePlanRevisionId: Schema.NullOr(PlanRevisionId).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  supersedingLaneId: Schema.NullOr(WorkLaneId).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
   acceptanceCriterionIds: Schema.Array(AcceptanceCriterionId).pipe(
@@ -591,6 +614,8 @@ export const LaneStateChangedPayload = Schema.Struct({
   toState: WorkLaneState,
   resumeState: Schema.NullOr(WorkLaneState).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   reason: Schema.optional(TrimmedNonEmptyString),
+  blockerId: Schema.optional(BlockerId),
+  supersedingLaneId: Schema.optional(WorkLaneId),
   updatedAt: IsoDateTime,
 });
 

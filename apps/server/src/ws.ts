@@ -117,6 +117,7 @@ import * as VcsProcess from "./vcs/VcsProcess.ts";
 import * as PairingGrantStore from "./auth/PairingGrantStore.ts";
 import * as SessionStore from "./auth/SessionStore.ts";
 import { failEnvironmentAuthInvalid, failEnvironmentInternal } from "./auth/http.ts";
+import { shouldResumeLaneWithSnapshot } from "./laneResume.ts";
 import * as RelayClient from "@t3tools/shared/relayClient";
 const isOrchestrationDispatchCommandError = Schema.is(OrchestrationDispatchCommandError);
 const isOrchestrationGetSnapshotError = Schema.is(OrchestrationGetSnapshotError);
@@ -554,10 +555,17 @@ const makeWsRpcLayer = (
             );
           case "thread.unarchived":
             return threadUpsertOrRemove(event.payload.threadId, event.sequence);
+          case "lane.created":
+          case "lane.imported":
+          case "lane.state-changed":
+          case "lane.task-contract-updated":
+          case "lane.meta-updated":
+          case "lane.plan-proposed":
+          case "lane.plan-activated":
+          case "lane.deliverable-registered":
+          case "source-truth.preflight-recorded":
+            return laneUpsertOrRemove(WorkLaneId.make(event.aggregateId), event.sequence);
           default:
-            if (event.aggregateKind === "lane") {
-              return laneUpsertOrRemove(WorkLaneId.make(event.aggregateId), event.sequence);
-            }
             if (event.aggregateKind !== "thread") {
               return Effect.succeed(Option.none());
             }
@@ -1420,8 +1428,45 @@ const makeWsRpcLayer = (
 
               if (input.afterSequence !== undefined) {
                 const afterSequence = input.afterSequence;
+                const headSequence = yield* orchestrationEngine.latestSequence;
+                const replayGap = headSequence - afterSequence;
+                const afterCatchUp =
+                  input.requestCompletionMarker === true
+                    ? Stream.concat(
+                        Stream.fromEffect(
+                          Queue.offer(liveBuffer, { kind: "synchronized" as const }),
+                        ).pipe(Stream.drain),
+                        bufferedLiveStream,
+                      )
+                    : bufferedLiveStream;
+
+                if (shouldResumeLaneWithSnapshot(headSequence, afterSequence)) {
+                  const snapshot = yield* projectionSnapshotQuery.getLaneDetail(input.laneId).pipe(
+                    Effect.mapError(
+                      (cause) =>
+                        new OrchestrationGetSnapshotError({
+                          message: `Failed to load lane ${input.laneId}`,
+                          cause,
+                        }),
+                    ),
+                  );
+                  if (Option.isNone(snapshot)) {
+                    return yield* new OrchestrationGetSnapshotError({
+                      message: `Lane ${input.laneId} was not found`,
+                      cause: input.laneId,
+                    });
+                  }
+                  return Stream.concat(
+                    Stream.make({
+                      kind: "snapshot" as const,
+                      snapshot: snapshot.value,
+                    }),
+                    afterCatchUp,
+                  );
+                }
+
                 const catchUpStream = orchestrationEngine
-                  .readEvents(afterSequence, Number.MAX_SAFE_INTEGER)
+                  .readEvents(afterSequence, replayGap)
                   .pipe(
                     Stream.filter(isThisLaneEvent),
                     Stream.map((event) => ({
@@ -1436,15 +1481,6 @@ const makeWsRpcLayer = (
                         }),
                     ),
                   );
-                const afterCatchUp =
-                  input.requestCompletionMarker === true
-                    ? Stream.concat(
-                        Stream.fromEffect(
-                          Queue.offer(liveBuffer, { kind: "synchronized" as const }),
-                        ).pipe(Stream.drain),
-                        bufferedLiveStream,
-                      )
-                    : bufferedLiveStream;
                 return Stream.concat(catchUpStream, afterCatchUp);
               }
 
