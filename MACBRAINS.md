@@ -142,12 +142,21 @@ Every completed or blocked run must close with these fields:
 
 ## Implementation map
 
-The complete product and engineering specification is in:
+The complete product and engineering specification is indexed by `docs/macbrains/README.md`. The required campaign artifacts are:
 
+- `docs/macbrains/FORK_BASELINE.md`
+- `docs/macbrains/DOCUMENTATION_AUDIT.md`
 - `docs/macbrains/PRODUCT_SPEC.md`
+- `docs/macbrains/PROJECT_PROFILES.md`
 - `docs/macbrains/DOMAIN_MODEL.md`
 - `docs/macbrains/IMPLEMENTATION_LEDGER.md`
+- `docs/macbrains/CAMPAIGN_MANIFEST.json`
+- `docs/macbrains/WORKFLOW_TEMPLATES.json`
 - `docs/macbrains/ACCEPTANCE_MATRIX.md`
+- `docs/macbrains/DEFAULT_POLICIES.json`
+- `docs/macbrains/FORK_IDENTITY_AND_RELEASE.md`
+- `docs/macbrains/PULL_TO_MAC.md`
+- `docs/macbrains/IMPLEMENTATION_HANDOFF.md`
 - `docs/macbrains/AGENT_EXECUTION_PROMPT.md`
 
-Agents must read all five before changing behavior governed by this fork.
+Agents must read the index, contract, project profile, selected workflow template, current package definition, and applicable acceptance rows before changing behavior governed by this fork.
