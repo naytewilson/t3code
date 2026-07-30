@@ -1,7 +1,7 @@
 # F0 Harden Receipt
 
 - Branch: `cursor/f0-worklane-source-truth-7986`
-- SHA: `c3e5be231ae14d3ea7978a71e228eeb7613b5cc0`
+- SHA: `4e9c2ca81561cee787efa49373c66c12c8545b20`
 - Commit: `fix(orchestration): harden work-lane foundation before pull`
 - Safe to pull: **yes** after green push of this harden commit
 
