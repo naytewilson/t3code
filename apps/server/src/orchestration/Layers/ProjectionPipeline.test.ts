@@ -1,13 +1,23 @@
 import {
+  BlockerId,
   CheckpointRef,
   CommandId,
   CorrelationId,
+  EnvironmentId,
   EventId,
   MessageId,
+  PlanRevisionId,
   ProjectId,
+  SourceTruthRevisionId,
+  SourceTruthRevision as SourceTruthRevisionSchema,
   ThreadId,
   TurnId,
   ProviderInstanceId,
+  WorkLaneId,
+  WorkLane as WorkLaneSchema,
+  type SourceTruthRevision,
+  type TaskContract,
+  type WorkLane,
 } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
@@ -15,6 +25,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { OrchestrationCommandReceiptRepositoryLive } from "../../persistence/Layers/OrchestrationCommandReceipts.ts";
@@ -35,13 +46,16 @@ import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { OrchestrationProjectionPipeline } from "../Services/ProjectionPipeline.ts";
 import { ServerConfig } from "../../config.ts";
 
-const makeProjectionPipelinePrefixedTestLayer = (prefix: string) =>
-  OrchestrationProjectionPipelineLive.pipe(
+const makeProjectionPipelinePrefixedTestLayer = (prefix: string) => {
+  const serverConfigLayer = ServerConfig.layerTest(process.cwd(), { prefix });
+  const persistenceLayer = SqlitePersistenceMemory.pipe(Layer.provide(serverConfigLayer));
+  return OrchestrationProjectionPipelineLive.pipe(
     Layer.provideMerge(OrchestrationEventStoreLive),
-    Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix })),
-    Layer.provideMerge(SqlitePersistenceMemory),
+    Layer.provideMerge(serverConfigLayer),
+    Layer.provideMerge(persistenceLayer),
     Layer.provideMerge(NodeServices.layer),
   );
+};
 
 const exists = (filePath: string) =>
   Effect.gen(function* () {
@@ -49,6 +63,93 @@ const exists = (filePath: string) =>
     const fileInfo = yield* Effect.result(fileSystem.stat(filePath));
     return fileInfo._tag === "Success";
   });
+
+const SOURCE_TRUTH_NOW = "2026-01-01T00:00:00.000Z";
+const SOURCE_TRUTH_LATER = "2026-01-01T00:00:01.000Z";
+const SOURCE_TRUTH_PROJECT_ID = ProjectId.make("project-source-truth");
+const SOURCE_TRUTH_LANE_ID = WorkLaneId.make("lane-source-truth");
+const SOURCE_TRUTH_ENVIRONMENT_ID = EnvironmentId.make("test-environment");
+const SOURCE_TRUTH_WORKTREE = "/tmp/worktrees/source-truth-lane";
+
+const makeSourceTruthTaskContract = (): TaskContract => ({
+  objective: "Verify source-truth invalidation",
+  constraints: [],
+  nonGoals: [],
+  deliverableRequirement: "required",
+  requiresPullRequest: false,
+  requiresUserVisibleSurface: false,
+  authorizedActions: ["edit", "test"],
+  prohibitedActions: ["force-push"],
+  completionReportRequired: true,
+  objectiveDerivation: "PROVEN",
+});
+
+const makeSourceTruthLane = (): WorkLane => ({
+  id: SOURCE_TRUTH_LANE_ID,
+  projectId: SOURCE_TRUTH_PROJECT_ID,
+  title: "Source-truth lane",
+  taskContract: makeSourceTruthTaskContract(),
+  state: "planned",
+  priority: "normal",
+  classification: "substantial",
+  environmentId: SOURCE_TRUTH_ENVIRONMENT_ID,
+  repositoryIdentity: null,
+  baseRef: null,
+  branch: "main",
+  worktreePath: SOURCE_TRUTH_WORKTREE,
+  ownerAssignmentId: null,
+  advisorAssignmentIds: [],
+  verifierAssignmentIds: [],
+  sourceTruthRevisionId: null,
+  sourceTruthActiveGitOperation: "none",
+  sourceTruthOwnershipOverlap: "unknown",
+  activePlanRevisionId: PlanRevisionId.make("plan-source-truth"),
+  acceptanceCriterionIds: [],
+  requiredReceiptKinds: [],
+  deliverableIds: [],
+  blockerIds: [],
+  primaryThreadId: null,
+  importedThreadId: null,
+  threadIds: [],
+  legacyExecutorRef: null,
+  resumeState: null,
+  supersedingLaneId: null,
+  createdAt: SOURCE_TRUTH_NOW,
+  updatedAt: SOURCE_TRUTH_NOW,
+  completedAt: null,
+});
+
+const makeSourceTruthRevision = (
+  id: string,
+  unknownsThatChangeAction: ReadonlyArray<string> = [],
+): SourceTruthRevision => ({
+  id: SourceTruthRevisionId.make(id),
+  laneId: SOURCE_TRUTH_LANE_ID,
+  repositoryIdentity: null,
+  repositoryRoot: "/tmp/repo",
+  branch: "main",
+  detached: false,
+  headSha: `${id}-head`,
+  baseSha: `${id}-base`,
+  worktreePath: SOURCE_TRUTH_WORKTREE,
+  dirty: { fingerprint: `${id}-fingerprint`, summary: "clean", isDirty: false },
+  instructionFiles: [],
+  manifests: [],
+  buildTestCandidates: [],
+  relevantFiles: [],
+  relevantTests: [],
+  activeGitOperation: "none",
+  ownershipOverlap: "exclusive",
+  canonicalExternalSourceRefs: [],
+  unknownsThatChangeAction,
+  safeNextAction: "continue workflow",
+  producedAt: SOURCE_TRUTH_NOW,
+  producerAssignmentId: null,
+  producerThreadId: null,
+  rawOutputArtifactRef: null,
+  supersededAt: null,
+  supersedesRevisionId: null,
+});
 
 const BaseTestLayer = makeProjectionPipelinePrefixedTestLayer("t3-projection-pipeline-test-");
 
@@ -2775,3 +2876,167 @@ engineLayer("OrchestrationProjectionPipeline via engine dispatch", (it) => {
     }),
   );
 });
+
+it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-source-truth-invalidation-")))(
+  "OrchestrationProjectionPipeline source truth",
+  (it) => {
+    it.effect("invalidates the current receipt and preserves superseded history", () =>
+      Effect.gen(function* () {
+        const projectionPipeline = yield* OrchestrationProjectionPipeline;
+        const eventStore = yield* OrchestrationEventStore;
+        const sql = yield* SqlClient.SqlClient;
+        const lane = makeSourceTruthLane();
+        const firstRevision = makeSourceTruthRevision("source-truth-1");
+        const secondRevision = makeSourceTruthRevision("source-truth-2", [
+          "repository root unavailable",
+        ]);
+
+        yield* eventStore.append({
+          type: "project.created",
+          eventId: EventId.make("event-source-truth-project"),
+          aggregateKind: "project",
+          aggregateId: SOURCE_TRUTH_PROJECT_ID,
+          occurredAt: SOURCE_TRUTH_NOW,
+          commandId: CommandId.make("command-source-truth-project"),
+          causationEventId: null,
+          correlationId: CommandId.make("correlation-source-truth-project"),
+          metadata: {},
+          payload: {
+            projectId: SOURCE_TRUTH_PROJECT_ID,
+            title: "Source-truth project",
+            workspaceRoot: "/tmp/source-truth-project",
+            defaultModelSelection: null,
+            scripts: [],
+            createdAt: SOURCE_TRUTH_NOW,
+            updatedAt: SOURCE_TRUTH_NOW,
+          },
+        });
+
+        yield* eventStore.append({
+          type: "lane.created",
+          eventId: EventId.make("event-source-truth-lane"),
+          aggregateKind: "lane",
+          aggregateId: SOURCE_TRUTH_LANE_ID,
+          occurredAt: SOURCE_TRUTH_NOW,
+          commandId: CommandId.make("command-source-truth-lane"),
+          causationEventId: null,
+          correlationId: CommandId.make("correlation-source-truth-lane"),
+          metadata: {},
+          payload: { lane, acceptanceCriteria: [] },
+        });
+
+        yield* eventStore.append({
+          type: "source-truth.preflight-recorded",
+          eventId: EventId.make("event-source-truth-preflight-1"),
+          aggregateKind: "lane",
+          aggregateId: SOURCE_TRUTH_LANE_ID,
+          occurredAt: SOURCE_TRUTH_NOW,
+          commandId: CommandId.make("command-source-truth-preflight-1"),
+          causationEventId: null,
+          correlationId: CommandId.make("correlation-source-truth-preflight-1"),
+          metadata: {},
+          payload: {
+            laneId: SOURCE_TRUTH_LANE_ID,
+            revision: firstRevision,
+            previousRevisionId: null,
+            recordedAt: SOURCE_TRUTH_NOW,
+          },
+        });
+
+        yield* eventStore.append({
+          type: "source-truth.refresh-requested",
+          eventId: EventId.make("event-source-truth-refresh"),
+          aggregateKind: "lane",
+          aggregateId: SOURCE_TRUTH_LANE_ID,
+          occurredAt: SOURCE_TRUTH_LATER,
+          commandId: CommandId.make("command-source-truth-refresh"),
+          causationEventId: null,
+          correlationId: CommandId.make("correlation-source-truth-refresh"),
+          metadata: {},
+          payload: { laneId: SOURCE_TRUTH_LANE_ID, requestedAt: SOURCE_TRUTH_LATER },
+        });
+
+        yield* eventStore.append({
+          type: "source-truth.preflight-recorded",
+          eventId: EventId.make("event-source-truth-preflight-2"),
+          aggregateKind: "lane",
+          aggregateId: SOURCE_TRUTH_LANE_ID,
+          occurredAt: SOURCE_TRUTH_LATER,
+          commandId: CommandId.make("command-source-truth-preflight-2"),
+          causationEventId: null,
+          correlationId: CommandId.make("correlation-source-truth-preflight-2"),
+          metadata: {},
+          payload: {
+            laneId: SOURCE_TRUTH_LANE_ID,
+            revision: secondRevision,
+            previousRevisionId: null,
+            recordedAt: SOURCE_TRUTH_LATER,
+          },
+        });
+
+        yield* eventStore.append({
+          type: "source-truth.conflict-recorded",
+          eventId: EventId.make("event-source-truth-conflict"),
+          aggregateKind: "lane",
+          aggregateId: SOURCE_TRUTH_LANE_ID,
+          occurredAt: SOURCE_TRUTH_LATER,
+          commandId: CommandId.make("command-source-truth-conflict"),
+          causationEventId: null,
+          correlationId: CommandId.make("correlation-source-truth-conflict"),
+          metadata: {},
+          payload: {
+            laneId: SOURCE_TRUTH_LANE_ID,
+            summary: "source truth changed",
+            blockerId: BlockerId.make("blocker-source-truth"),
+            recordedAt: SOURCE_TRUTH_LATER,
+          },
+        });
+
+        yield* projectionPipeline.bootstrap;
+
+        const laneRows = yield* sql<{
+          readonly sourceTruthRevisionId: string | null;
+          readonly laneJson: string;
+        }>`
+          SELECT
+            source_truth_revision_id AS "sourceTruthRevisionId",
+            lane_json AS "laneJson"
+          FROM projection_work_lanes
+          WHERE id = ${SOURCE_TRUTH_LANE_ID}
+        `;
+        assert.equal(laneRows.length, 1);
+        const projectedLane = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(WorkLaneSchema))(
+          laneRows[0]!.laneJson,
+        );
+        assert.equal(laneRows[0]!.sourceTruthRevisionId, null);
+        assert.equal(projectedLane.sourceTruthOwnershipOverlap, "unknown");
+        assert.deepEqual(projectedLane.blockerIds, [BlockerId.make("blocker-source-truth")]);
+
+        const revisionRows = yield* sql<{
+          readonly id: string;
+          readonly supersededAt: string | null;
+          readonly revisionJson: string;
+        }>`
+          SELECT
+            id,
+            superseded_at AS "supersededAt",
+            revision_json AS "revisionJson"
+          FROM projection_source_truth_revisions
+          WHERE lane_id = ${SOURCE_TRUTH_LANE_ID}
+          ORDER BY id ASC
+        `;
+        assert.deepEqual(
+          revisionRows.map((row) => ({ id: row.id, supersededAt: row.supersededAt })),
+          [
+            { id: "source-truth-1", supersededAt: SOURCE_TRUTH_LATER },
+            { id: "source-truth-2", supersededAt: SOURCE_TRUTH_LATER },
+          ],
+        );
+        const storedSecondRevision = yield* Schema.decodeUnknownEffect(
+          Schema.fromJsonString(SourceTruthRevisionSchema),
+        )(revisionRows[1]!.revisionJson);
+        assert.equal(storedSecondRevision.supersededAt, SOURCE_TRUTH_LATER);
+      }),
+    );
+  },
+);

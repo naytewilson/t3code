@@ -84,6 +84,16 @@ export const WORK_LANE_EXECUTION_START_STATES = [
   "deliverable-ready",
 ] as const satisfies ReadonlyArray<WorkLaneState>;
 
+/**
+ * A plan may be activated while orientation is being finalized or while the
+ * lane is already planned. Once execution or a terminal transition starts,
+ * plan activation is a workflow-authority mutation and must be rejected.
+ */
+export const WORK_LANE_PLAN_ACTIVATION_STATES = [
+  "oriented",
+  "planned",
+] as const satisfies ReadonlyArray<WorkLaneState>;
+
 export const WORK_LANE_NORMAL_TRANSITIONS: Readonly<
   Record<WorkLaneState, ReadonlyArray<WorkLaneState>>
 > = {
@@ -554,6 +564,7 @@ export const SourceTruthConflictRecordCommand = Schema.Struct({
   commandId: CommandId,
   laneId: WorkLaneId,
   summary: TrimmedNonEmptyString,
+  blockerId: Schema.optional(BlockerId),
   recordedAt: IsoDateTime,
 });
 
@@ -669,6 +680,7 @@ export const SourceTruthPreflightRecordedPayload = Schema.Struct({
 export const SourceTruthConflictRecordedPayload = Schema.Struct({
   laneId: WorkLaneId,
   summary: TrimmedNonEmptyString,
+  blockerId: Schema.optional(BlockerId),
   recordedAt: IsoDateTime,
 });
 

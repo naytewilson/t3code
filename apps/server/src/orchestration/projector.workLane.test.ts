@@ -233,3 +233,101 @@ it.effect("toWorkLaneShell keeps shell compact without taskContract", () =>
     );
   }),
 );
+
+it.effect("invalidates source truth on conflict and refresh while retaining history", () =>
+  Effect.gen(function* () {
+    const lane = makeWorkLane();
+    const revision = makeSourceTruthRevision();
+    let model = yield* projectEvent(
+      createEmptyReadModel(NOW),
+      makeLaneEvent({
+        sequence: 1,
+        type: "lane.created",
+        payload: { lane, acceptanceCriteria: [] },
+      }),
+    );
+    model = yield* projectEvent(
+      model,
+      makeLaneEvent({
+        sequence: 2,
+        type: "source-truth.preflight-recorded",
+        payload: {
+          laneId: LANE_ID,
+          revision,
+          previousRevisionId: null,
+          recordedAt: LATER,
+        },
+      }),
+    );
+    model = yield* projectEvent(
+      model,
+      makeLaneEvent({
+        sequence: 3,
+        type: "source-truth.conflict-recorded",
+        payload: {
+          laneId: LANE_ID,
+          summary: "worktree changed",
+          blockerId: "blocker-1",
+          recordedAt: LATER,
+        },
+      }),
+    );
+    const conflicted = model.lanes[0]!;
+    expect(conflicted.sourceTruthRevisionId).toBeNull();
+    expect(conflicted.sourceTruthOwnershipOverlap).toBe("unknown");
+    expect(conflicted.blockerIds).toEqual(["blocker-1"]);
+
+    model = yield* projectEvent(
+      model,
+      makeLaneEvent({
+        sequence: 4,
+        type: "source-truth.refresh-requested",
+        payload: { laneId: LANE_ID, requestedAt: "2026-01-01T02:00:00.000Z" },
+      }),
+    );
+    expect(model.lanes[0]!.sourceTruthRevisionId).toBeNull();
+    expect(model.lanes[0]!.sourceTruthOwnershipOverlap).toBe("unknown");
+
+    model = yield* projectEvent(
+      model,
+      makeLaneEvent({
+        sequence: 5,
+        type: "source-truth.conflict-recorded",
+        payload: {
+          laneId: LANE_ID,
+          summary: "legacy conflict without blocker id",
+          recordedAt: "2026-01-01T03:00:00.000Z",
+        },
+      }),
+    );
+    expect(model.lanes[0]!.blockerIds).toContain("source-truth:command-5");
+  }),
+);
+
+it.effect("projects unknown action-changing facts as an unknown execution gate", () =>
+  Effect.gen(function* () {
+    const lane = makeWorkLane({ state: "planned" });
+    const revision = makeSourceTruthRevision({ unknownsThatChangeAction: ["repository root unavailable"] });
+    const model = yield* projectEvent(
+      yield* projectEvent(
+        createEmptyReadModel(NOW),
+        makeLaneEvent({
+          sequence: 1,
+          type: "lane.created",
+          payload: { lane, acceptanceCriteria: [] },
+        }),
+      ),
+      makeLaneEvent({
+        sequence: 2,
+        type: "source-truth.preflight-recorded",
+        payload: {
+          laneId: LANE_ID,
+          revision,
+          previousRevisionId: null,
+          recordedAt: LATER,
+        },
+      }),
+    );
+    expect(model.lanes[0]!.sourceTruthOwnershipOverlap).toBe("unknown");
+  }),
+);

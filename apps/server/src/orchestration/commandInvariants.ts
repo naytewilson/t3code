@@ -8,7 +8,10 @@ import type {
   WorkLane,
   WorkLaneId,
 } from "@t3tools/contracts";
-import { normalizeProjectPathForComparison } from "@t3tools/shared/path";
+import {
+  isWindowsAbsolutePath,
+  normalizeProjectPathForComparison,
+} from "@t3tools/shared/path";
 import * as Effect from "effect/Effect";
 
 import { OrchestrationCommandInvariantError } from "./Errors.ts";
@@ -238,6 +241,17 @@ export function requireWorktreeExclusive(input: {
 }): Effect.Effect<void, OrchestrationCommandInvariantError> {
   if (input.worktreePath === null || input.worktreePath.trim() === "") {
     return Effect.void;
+  }
+  const trimmedPath = input.worktreePath.trim();
+  const isAbsolute = trimmedPath.startsWith("/") || isWindowsAbsolutePath(trimmedPath);
+  const hasDotSegments = trimmedPath.split(/[\\/]+/).some((segment) => segment === "." || segment === "..");
+  if (!isAbsolute || hasDotSegments) {
+    return Effect.fail(
+      invariantError(
+        input.command.type,
+        `Worktree path '${input.worktreePath}' must be an absolute canonical path without '.' or '..' segments.`,
+      ),
+    );
   }
   const normalizedPath = normalizeProjectPathForComparison(input.worktreePath);
   const conflictingLane = input.readModel.lanes.find(

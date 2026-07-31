@@ -1,9 +1,10 @@
 import {
+  BlockerId,
   EventId,
   isWorkLaneTerminalState,
   isWorkLaneWorktreeOwningState,
   WORK_LANE_EXECUTION_START_STATES,
-  type BlockerId,
+  WORK_LANE_PLAN_ACTIVATION_STATES,
   type OrchestrationCommand,
   type OrchestrationEvent,
   type OrchestrationReadModel,
@@ -32,6 +33,7 @@ import {
 } from "./commandInvariants.ts";
 import { projectEvent } from "./projector.ts";
 import {
+  isAllowedWorkLaneTransition,
   isAllowedWorkLaneSupersede,
   requireAllowedWorkLaneTransition,
 } from "./workLaneTransitions.ts";
@@ -1415,6 +1417,28 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         laneId: command.laneId,
       });
+      yield* requireLaneMutable({ command, lane });
+      if (
+        !(WORK_LANE_PLAN_ACTIVATION_STATES as ReadonlyArray<string>).includes(lane.state)
+      ) {
+        return yield* Effect.fail(
+          new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail: `Lane '${command.laneId}' must be in oriented|planned to activate a plan (current: '${lane.state}').`,
+          }),
+        );
+      }
+      if (
+        lane.activePlanRevisionId !== null &&
+        lane.activePlanRevisionId !== command.planRevisionId
+      ) {
+        return yield* Effect.fail(
+          new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail: `Lane '${command.laneId}' already has active plan '${lane.activePlanRevisionId}'.`,
+          }),
+        );
+      }
       const planActivated: PlannedOrchestrationEvent = {
         ...(yield* withEventBase({
           aggregateKind: "lane",
@@ -1472,11 +1496,22 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           }),
         );
       }
-      if (lane.sourceTruthOwnershipOverlap === "overlap") {
+      if (lane.classification === "substantial" && lane.worktreePath === null) {
         return yield* Effect.fail(
           new OrchestrationCommandInvariantError({
             commandType: command.type,
-            detail: `Lane '${command.laneId}' cannot execute while source-truth ownership overlap is 'overlap'.`,
+            detail: `Substantial lane '${command.laneId}' requires a worktree path before execution.`,
+          }),
+        );
+      }
+      if (
+        lane.sourceTruthOwnershipOverlap !== "exclusive" &&
+        lane.sourceTruthOwnershipOverlap !== "not-applicable"
+      ) {
+        return yield* Effect.fail(
+          new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail: `Lane '${command.laneId}' requires exclusive or not-applicable source-truth ownership before execution (current: '${lane.sourceTruthOwnershipOverlap}').`,
           }),
         );
       }
@@ -1485,14 +1520,6 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           new OrchestrationCommandInvariantError({
             commandType: command.type,
             detail: `Lane '${command.laneId}' cannot execute while git operation '${lane.sourceTruthActiveGitOperation}' is active.`,
-          }),
-        );
-      }
-      if (lane.classification === "substantial" && lane.worktreePath === null) {
-        return yield* Effect.fail(
-          new OrchestrationCommandInvariantError({
-            commandType: command.type,
-            detail: `Substantial lane '${command.laneId}' requires a worktree path before execution.`,
           }),
         );
       }
@@ -1596,12 +1623,72 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "lane.completion.request": {
-      return yield* Effect.fail(
-        new OrchestrationCommandInvariantError({
-          commandType: command.type,
-          detail: "completion gate reserved until F2",
-        }),
-      );
+      const lane = yield* requireLane({
+        readModel,
+        command,
+        laneId: command.laneId,
+      });
+      yield* requireLaneMutable({ command, lane });
+      if (lane.state !== "deliverable-ready") {
+        return yield* Effect.fail(
+          new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail: `Lane '${command.laneId}' must be deliverable-ready before completion (current: '${lane.state}').`,
+          }),
+        );
+      }
+      if (lane.activePlanRevisionId === null) {
+        return yield* Effect.fail(
+          new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail: `Lane '${command.laneId}' requires an active plan before completion.`,
+          }),
+        );
+      }
+      if (lane.sourceTruthRevisionId === null) {
+        return yield* Effect.fail(
+          new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail: `Lane '${command.laneId}' requires current source truth before completion.`,
+          }),
+        );
+      }
+      if (
+        lane.sourceTruthActiveGitOperation !== "none" ||
+        (lane.sourceTruthOwnershipOverlap !== "exclusive" &&
+          lane.sourceTruthOwnershipOverlap !== "not-applicable")
+      ) {
+        return yield* Effect.fail(
+          new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail: `Lane '${command.laneId}' cannot complete with an unsafe source-truth gate.`,
+          }),
+        );
+      }
+      if (
+        lane.taskContract.deliverableRequirement === "required" &&
+        lane.deliverableIds.length === 0
+      ) {
+        return yield* Effect.fail(
+          new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail: `Lane '${command.laneId}' requires a registered deliverable before completion.`,
+          }),
+        );
+      }
+      yield* requireAllowedWorkLaneTransition({
+        commandType: command.type,
+        from: lane.state,
+        to: "completed",
+      });
+      return yield* emitLaneStateChanged({
+        command,
+        laneId: command.laneId,
+        fromState: lane.state,
+        toState: "completed",
+        occurredAt: command.requestedAt,
+        resumeState: null,
+      });
     }
 
     case "lane.block": {
@@ -1887,6 +1974,36 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           }),
         );
       }
+      if (
+        command.revision.environmentId !== undefined &&
+        command.revision.environmentId !== lane.environmentId
+      ) {
+        return yield* Effect.fail(
+          new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail: `Source-truth revision environmentId '${command.revision.environmentId}' does not match lane environmentId '${lane.environmentId}'.`,
+          }),
+        );
+      }
+      if (command.revision.worktreePath !== lane.worktreePath) {
+        return yield* Effect.fail(
+          new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail: `Source-truth revision worktreePath '${command.revision.worktreePath ?? "null"}' does not match lane worktreePath '${lane.worktreePath ?? "null"}'.`,
+          }),
+        );
+      }
+      if (
+        command.revision.repositoryIdentity?.canonicalKey !==
+        lane.repositoryIdentity?.canonicalKey
+      ) {
+        return yield* Effect.fail(
+          new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail: "Source-truth revision repository identity does not match the lane repository identity.",
+          }),
+        );
+      }
       if (command.revision.id === lane.sourceTruthRevisionId) {
         return yield* Effect.fail(
           new OrchestrationCommandInvariantError({
@@ -1933,7 +2050,8 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         laneId: command.laneId,
       });
       yield* requireLaneMutable({ command, lane: conflictLane });
-      return {
+      const blockerId = command.blockerId ?? BlockerId.make(`source-truth:${command.commandId}`);
+      const conflictRecorded: PlannedOrchestrationEvent = {
         ...(yield* withEventBase({
           aggregateKind: "lane",
           aggregateId: command.laneId,
@@ -1944,9 +2062,27 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         payload: {
           laneId: command.laneId,
           summary: command.summary,
+          blockerId,
           recordedAt: command.recordedAt,
         },
       };
+      if (
+        conflictLane.state === "blocked" ||
+        !isAllowedWorkLaneTransition(conflictLane.state, "blocked")
+      ) {
+        return conflictRecorded;
+      }
+      const stateChanged = yield* emitLaneStateChanged({
+        command,
+        laneId: command.laneId,
+        fromState: conflictLane.state,
+        toState: "blocked",
+        occurredAt: command.recordedAt,
+        resumeState: conflictLane.state,
+        reason: command.summary,
+        blockerId,
+      });
+      return [conflictRecorded, stateChanged];
     }
 
     case "source-truth.refresh.request": {

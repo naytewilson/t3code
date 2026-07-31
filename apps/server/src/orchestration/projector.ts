@@ -6,6 +6,7 @@ import type {
   WorkLaneId,
 } from "@t3tools/contracts";
 import {
+  BlockerId,
   OrchestrationCheckpointSummary,
   OrchestrationMessage,
   OrchestrationSession,
@@ -29,6 +30,8 @@ import {
   ProjectDeletedPayload,
   ProjectMetaUpdatedPayload,
   SourceTruthPreflightRecordedPayload,
+  SourceTruthConflictRecordedPayload,
+  SourceTruthRefreshRequestedPayload,
   ThreadActivityAppendedPayload,
   ThreadArchivedPayload,
   ThreadCreatedPayload,
@@ -929,8 +932,58 @@ export function projectEvent(
           lanes: updateLane(nextBase.lanes, payload.laneId, {
             sourceTruthRevisionId: payload.revision.id,
             sourceTruthActiveGitOperation: payload.revision.activeGitOperation,
-            sourceTruthOwnershipOverlap: payload.revision.ownershipOverlap,
+            sourceTruthOwnershipOverlap:
+              payload.revision.unknownsThatChangeAction.length > 0
+                ? "unknown"
+                : payload.revision.ownershipOverlap,
             updatedAt: payload.recordedAt,
+          }),
+        })),
+      );
+
+    case "source-truth.conflict-recorded":
+      return decodeForEvent(
+        SourceTruthConflictRecordedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => {
+          const lane = nextBase.lanes.find((entry) => entry.id === payload.laneId);
+          if (lane === undefined) {
+            return nextBase;
+          }
+          const blockerId = payload.blockerId ?? BlockerId.make(`source-truth:${event.commandId}`);
+          const blockerIds = lane.blockerIds.includes(blockerId)
+            ? lane.blockerIds
+            : [...lane.blockerIds, blockerId];
+          return {
+            ...nextBase,
+            lanes: updateLane(nextBase.lanes, payload.laneId, {
+              sourceTruthRevisionId: null,
+              sourceTruthActiveGitOperation: "none",
+              sourceTruthOwnershipOverlap: "unknown",
+              blockerIds,
+              updatedAt: payload.recordedAt,
+            }),
+          };
+        }),
+      );
+
+    case "source-truth.refresh-requested":
+      return decodeForEvent(
+        SourceTruthRefreshRequestedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          lanes: updateLane(nextBase.lanes, payload.laneId, {
+            sourceTruthRevisionId: null,
+            sourceTruthActiveGitOperation: "none",
+            sourceTruthOwnershipOverlap: "unknown",
+            updatedAt: payload.requestedAt,
           }),
         })),
       );

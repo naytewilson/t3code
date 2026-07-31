@@ -1,5 +1,6 @@
 import {
   ApprovalRequestId,
+  BlockerId,
   type ChatAttachment,
   type OrchestrationEvent,
   type OrchestrationSessionStatus,
@@ -1725,7 +1726,10 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
                   ...existing.value.lane,
                   sourceTruthRevisionId: event.payload.revision.id,
                   sourceTruthActiveGitOperation: event.payload.revision.activeGitOperation,
-                  sourceTruthOwnershipOverlap: event.payload.revision.ownershipOverlap,
+                  sourceTruthOwnershipOverlap:
+                    event.payload.revision.unknownsThatChangeAction.length > 0
+                      ? "unknown"
+                      : event.payload.revision.ownershipOverlap,
                   updatedAt: event.payload.recordedAt,
                 },
                 event.sequence,
@@ -1735,9 +1739,89 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           return;
         }
 
-        case "source-truth.conflict-recorded":
-        case "source-truth.refresh-requested":
+        case "source-truth.conflict-recorded": {
+          const existing = yield* projectionWorkLaneRepository.getById({
+            id: event.payload.laneId,
+          });
+          if (Option.isNone(existing)) {
+            return;
+          }
+          const lane = existing.value.lane;
+          if (lane.sourceTruthRevisionId !== null) {
+            const previous = yield* projectionSourceTruthRevisionRepository.getById({
+              id: lane.sourceTruthRevisionId,
+            });
+            if (Option.isSome(previous)) {
+              yield* projectionSourceTruthRevisionRepository.upsert({
+                ...previous.value,
+                supersededAt: event.payload.recordedAt,
+                revision: {
+                  ...previous.value.revision,
+                  supersededAt: event.payload.recordedAt,
+                },
+                lastSequence: event.sequence,
+              });
+            }
+          }
+          const blockerId =
+            event.payload.blockerId ?? BlockerId.make(`source-truth:${event.commandId}`);
+          const blockerIds = lane.blockerIds.includes(blockerId)
+            ? lane.blockerIds
+            : [...lane.blockerIds, blockerId];
+          yield* projectionWorkLaneRepository.upsert(
+            toProjectionWorkLaneRow(
+              {
+                ...lane,
+                sourceTruthRevisionId: null,
+                sourceTruthActiveGitOperation: "none",
+                sourceTruthOwnershipOverlap: "unknown",
+                blockerIds,
+                updatedAt: event.payload.recordedAt,
+              },
+              event.sequence,
+            ),
+          );
           return;
+        }
+
+        case "source-truth.refresh-requested": {
+          const existing = yield* projectionWorkLaneRepository.getById({
+            id: event.payload.laneId,
+          });
+          if (Option.isNone(existing)) {
+            return;
+          }
+          const lane = existing.value.lane;
+          if (lane.sourceTruthRevisionId !== null) {
+            const previous = yield* projectionSourceTruthRevisionRepository.getById({
+              id: lane.sourceTruthRevisionId,
+            });
+            if (Option.isSome(previous)) {
+              yield* projectionSourceTruthRevisionRepository.upsert({
+                ...previous.value,
+                supersededAt: event.payload.requestedAt,
+                revision: {
+                  ...previous.value.revision,
+                  supersededAt: event.payload.requestedAt,
+                },
+                lastSequence: event.sequence,
+              });
+            }
+          }
+          yield* projectionWorkLaneRepository.upsert(
+            toProjectionWorkLaneRow(
+              {
+                ...lane,
+                sourceTruthRevisionId: null,
+                sourceTruthActiveGitOperation: "none",
+                sourceTruthOwnershipOverlap: "unknown",
+                updatedAt: event.payload.requestedAt,
+              },
+              event.sequence,
+            ),
+          );
+          return;
+        }
 
         default:
           return;

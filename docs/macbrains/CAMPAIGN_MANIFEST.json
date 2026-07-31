@@ -45,7 +45,7 @@
     {
       "id": "F0",
       "title": "Work lane and source-truth contracts",
-      "status": "IMPLEMENTED",
+      "status": "IMPLEMENTED_UNVERIFIED",
       "dependencies": [],
       "ownershipGroup": "contracts-orchestration-foundation",
       "advisorRequired": true,

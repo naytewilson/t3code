@@ -166,6 +166,9 @@ const makeTest = Effect.fn("ServerConfig.makeTest")(function* (
       : yield* fs.makeTempDirectoryScoped({ prefix: baseDirOrPrefix.prefix });
   const derivedPaths = yield* deriveServerPaths(baseDir, devUrl);
   yield* ensureServerDirectories(derivedPaths);
+  if (typeof baseDirOrPrefix !== "string") {
+    yield* fs.writeFileString(derivedPaths.environmentIdPath, "test-environment\n");
+  }
 
   return ServerConfig.of({
     logLevel: "Error",

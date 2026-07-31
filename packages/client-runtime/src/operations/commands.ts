@@ -2,6 +2,7 @@ import {
   CommandId,
   ORCHESTRATION_WS_METHODS,
   type ClientOrchestrationCommand,
+  type WorkLaneClientCommand,
 } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
@@ -28,6 +29,14 @@ type CommandInput<T extends CommandType> = Omit<
       }
     : {});
 
+type WorkLaneCommandType = WorkLaneClientCommand["type"];
+export type WorkLaneCommandInput<T extends WorkLaneCommandType> = Omit<
+  Extract<WorkLaneClientCommand, { readonly type: T }>,
+  "type" | "commandId"
+> & {
+  readonly commandId?: CommandId;
+};
+
 export type CreateProjectInput = CommandInput<"project.create">;
 export type UpdateProjectInput = CommandInput<"project.meta.update">;
 export type DeleteProjectInput = CommandInput<"project.delete">;
@@ -48,6 +57,15 @@ export type RespondToThreadApprovalInput = CommandInput<"thread.approval.respond
 export type RespondToThreadUserInputInput = CommandInput<"thread.user-input.respond">;
 export type RevertThreadCheckpointInput = CommandInput<"thread.checkpoint.revert">;
 export type StopThreadSessionInput = CommandInput<"thread.session.stop">;
+
+export type CreateWorkLaneInput = WorkLaneCommandInput<"lane.create">;
+export type RequestWorkLanePreflightInput = WorkLaneCommandInput<"lane.preflight.request">;
+export type ProposeWorkLanePlanInput = WorkLaneCommandInput<"lane.plan.propose">;
+export type ActivateWorkLanePlanInput = WorkLaneCommandInput<"lane.plan.activate">;
+export type StartWorkLaneExecutionInput = WorkLaneCommandInput<"lane.execution.start">;
+export type RefreshWorkLaneSourceTruthInput = WorkLaneCommandInput<"source-truth.refresh.request">;
+export type CompleteWorkLaneInput = WorkLaneCommandInput<"lane.completion.request">;
+export type RecoverWorkLaneInput = WorkLaneCommandInput<"lane.recovery.request">;
 
 type DispatchTag = typeof ORCHESTRATION_WS_METHODS.dispatchCommand;
 type CommandEffect = Effect.Effect<
@@ -82,6 +100,48 @@ function timestampedCommandMetadata(input: {
 function dispatch(command: ClientOrchestrationCommand) {
   return request(ORCHESTRATION_WS_METHODS.dispatchCommand, command);
 }
+
+export function dispatchWorkLaneCommand<T extends WorkLaneCommandType>(
+  type: T,
+  input: WorkLaneCommandInput<T>,
+): CommandEffect {
+  return commandId(input).pipe(
+    Effect.flatMap((generatedCommandId) =>
+      dispatch({
+        ...input,
+        type,
+        commandId: generatedCommandId,
+      } as unknown as ClientOrchestrationCommand),
+    ),
+  );
+}
+
+export const createWorkLane: (input: CreateWorkLaneInput) => CommandEffect = (input) =>
+  dispatchWorkLaneCommand("lane.create", input);
+
+export const requestWorkLanePreflight: (
+  input: RequestWorkLanePreflightInput,
+) => CommandEffect = (input) => dispatchWorkLaneCommand("lane.preflight.request", input);
+
+export const proposeWorkLanePlan: (input: ProposeWorkLanePlanInput) => CommandEffect = (input) =>
+  dispatchWorkLaneCommand("lane.plan.propose", input);
+
+export const activateWorkLanePlan: (input: ActivateWorkLanePlanInput) => CommandEffect = (input) =>
+  dispatchWorkLaneCommand("lane.plan.activate", input);
+
+export const startWorkLaneExecution: (
+  input: StartWorkLaneExecutionInput,
+) => CommandEffect = (input) => dispatchWorkLaneCommand("lane.execution.start", input);
+
+export const refreshWorkLaneSourceTruth: (
+  input: RefreshWorkLaneSourceTruthInput,
+) => CommandEffect = (input) => dispatchWorkLaneCommand("source-truth.refresh.request", input);
+
+export const completeWorkLane: (input: CompleteWorkLaneInput) => CommandEffect = (input) =>
+  dispatchWorkLaneCommand("lane.completion.request", input);
+
+export const recoverWorkLane: (input: RecoverWorkLaneInput) => CommandEffect = (input) =>
+  dispatchWorkLaneCommand("lane.recovery.request", input);
 
 export const createProject: (input: CreateProjectInput) => CommandEffect = Effect.fn(
   "EnvironmentCommands.createProject",

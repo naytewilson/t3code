@@ -15,6 +15,7 @@ import {
   findThreadById,
   listThreadsByProjectId,
   requireNonNegativeInteger,
+  requireWorktreeExclusive,
   requireThread,
   requireThreadAbsent,
 } from "./commandInvariants.ts";
@@ -220,5 +221,31 @@ describe("commandInvariants", () => {
         }),
       ),
     ).rejects.toThrow("greater than or equal to 0");
+  });
+
+  it("rejects non-canonical worktree paths before checking ownership", async () => {
+    const command = messageSendCommand;
+    const invalidPaths = ["relative/worktree", "/tmp/worktrees/../shared", "/tmp/./worktree"];
+    for (const worktreePath of invalidPaths) {
+      await expect(
+        Effect.runPromise(
+          requireWorktreeExclusive({
+            readModel,
+            command,
+            worktreePath,
+            exceptLaneId: "lane-1" as never,
+          }),
+        ),
+      ).rejects.toThrow("absolute canonical path");
+    }
+
+    await Effect.runPromise(
+      requireWorktreeExclusive({
+        readModel,
+        command,
+        worktreePath: "/tmp/worktrees/lane-1",
+        exceptLaneId: "lane-1" as never,
+      }),
+    );
   });
 });

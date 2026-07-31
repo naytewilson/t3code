@@ -564,6 +564,8 @@ const makeWsRpcLayer = (
           case "lane.plan-activated":
           case "lane.deliverable-registered":
           case "source-truth.preflight-recorded":
+          case "source-truth.conflict-recorded":
+          case "source-truth.refresh-requested":
             return laneUpsertOrRemove(WorkLaneId.make(event.aggregateId), event.sequence);
           default:
             if (event.aggregateKind !== "thread") {

@@ -238,6 +238,13 @@ it.layer(NodeServices.layer)("work lane decider", (it) => {
             proposedAt: NOW,
           },
           {
+            type: "lane.plan.activate",
+            commandId: CommandId.make("cmd-plan-activate"),
+            laneId: LANE_ID,
+            planRevisionId,
+            activatedAt: NOW,
+          },
+          {
             type: "source-truth.preflight.record",
             commandId: CommandId.make("cmd-source-truth"),
             laneId: LANE_ID,
@@ -269,6 +276,12 @@ it.layer(NodeServices.layer)("work lane decider", (it) => {
             deliverableId,
             registeredAt: NOW,
           },
+          {
+            type: "lane.completion.request",
+            commandId: CommandId.make("cmd-complete"),
+            laneId: LANE_ID,
+            requestedAt: LATER,
+          },
         ],
       });
 
@@ -279,18 +292,102 @@ it.layer(NodeServices.layer)("work lane decider", (it) => {
         "lane.state-changed",
         "lane.state-changed",
         "lane.plan-proposed",
+        "lane.plan-activated",
         "source-truth.preflight-recorded",
         "lane.state-changed",
         "lane.state-changed",
         "lane.state-changed",
         "lane.state-changed",
         "lane.deliverable-registered",
+        "lane.state-changed",
       ]);
 
       const lane = readModel.lanes[0];
-      expect(lane?.state).toBe("deliverable-ready");
+      expect(lane?.state).toBe("completed");
       expect(lane?.sourceTruthRevisionId).toBe(revision.id);
       expect(lane?.deliverableIds).toEqual([deliverableId]);
+    }),
+  );
+
+  it.effect("only activates plans from mutable planned states", () =>
+    Effect.gen(function* () {
+      const planRevisionId = PlanRevisionId.make("plan-activation");
+
+      const oriented = yield* decideOrchestrationCommand({
+        command: {
+          type: "lane.plan.activate",
+          commandId: CommandId.make("cmd-plan-activate-oriented"),
+          laneId: LANE_ID,
+          planRevisionId,
+          activatedAt: NOW,
+        },
+        readModel: makeReadModel([makeWorkLane({ state: "oriented" })]),
+      });
+      expect(asEvents(oriented).map((event) => event.type)).toEqual([
+        "lane.plan-activated",
+        "lane.state-changed",
+      ]);
+
+      const planned = yield* decideOrchestrationCommand({
+        command: {
+          type: "lane.plan.activate",
+          commandId: CommandId.make("cmd-plan-activate-planned"),
+          laneId: LANE_ID,
+          planRevisionId,
+          activatedAt: NOW,
+        },
+        readModel: makeReadModel([makeWorkLane({ state: "planned" })]),
+      }).pipe(Effect.orDie);
+      expect(asEvents(planned)).toHaveLength(1);
+      expect(payloadOf<{ planRevisionId: PlanRevisionId }>(asEvents(planned)[0], "lane.plan-activated").planRevisionId).toBe(
+        planRevisionId,
+      );
+
+      for (const state of [
+        "queued",
+        "preflight",
+        "executing",
+        "testing",
+        "reviewing",
+        "deliverable-ready",
+        "blocked",
+        "failed",
+        "recovery-required",
+        "cancelled",
+        "superseded",
+        "completed",
+      ] as const) {
+        const error = yield* decideOrchestrationCommand({
+          command: {
+            type: "lane.plan.activate",
+            commandId: CommandId.make(`cmd-plan-activate-${state}`),
+            laneId: LANE_ID,
+            planRevisionId,
+            activatedAt: NOW,
+          },
+          readModel: makeReadModel([makeWorkLane({ state })]),
+        }).pipe(Effect.flip);
+        expectInvariant(
+          error,
+          state === "completed" || state === "cancelled" || state === "superseded"
+            ? "terminal"
+            : "oriented|planned",
+        );
+      }
+
+      const replacementError = yield* decideOrchestrationCommand({
+        command: {
+          type: "lane.plan.activate",
+          commandId: CommandId.make("cmd-plan-activate-replacement"),
+          laneId: LANE_ID,
+          planRevisionId: PlanRevisionId.make("plan-other"),
+          activatedAt: NOW,
+        },
+        readModel: makeReadModel([
+          makeWorkLane({ state: "planned", activePlanRevisionId: planRevisionId }),
+        ]),
+      }).pipe(Effect.flip);
+      expectInvariant(replacementError, "already has active plan");
     }),
   );
 
@@ -334,7 +431,8 @@ it.layer(NodeServices.layer)("work lane decider", (it) => {
       }).pipe(Effect.flip);
       expectInvariant(cancelledToPreflight, "is not allowed");
 
-      // completion.request always fails — covered in depth below; assert here too.
+      // Completion is now implemented, so a deliverable-ready lane must still
+      // carry the active plan and source-truth evidence required by the gate.
       const completion = yield* decideOrchestrationCommand({
         command: {
           type: "lane.completion.request",
@@ -344,7 +442,7 @@ it.layer(NodeServices.layer)("work lane decider", (it) => {
         },
         readModel: makeReadModel([makeWorkLane({ state: "deliverable-ready" })]),
       }).pipe(Effect.flip);
-      expectInvariant(completion, "completion gate reserved until F2");
+      expectInvariant(completion, "requires an active plan before completion");
     }),
   );
 
@@ -387,6 +485,7 @@ it.layer(NodeServices.layer)("work lane decider", (it) => {
               classification: "bounded-readonly",
               worktreePath: null,
               sourceTruthRevisionId: SourceTruthRevisionId.make("str-1"),
+              sourceTruthOwnershipOverlap: "not-applicable",
             }),
           ]),
         });
@@ -414,12 +513,14 @@ it.layer(NodeServices.layer)("work lane decider", (it) => {
             state: "executing",
             worktreePath: WORKTREE,
             sourceTruthRevisionId: SourceTruthRevisionId.make("str-1"),
+            sourceTruthOwnershipOverlap: "exclusive",
           }),
           makeWorkLane({
             id: otherLaneId,
             state: "planned",
             worktreePath: WORKTREE,
             sourceTruthRevisionId: SourceTruthRevisionId.make("str-2"),
+            sourceTruthOwnershipOverlap: "exclusive",
           }),
         ]),
       }).pipe(Effect.flip);
@@ -427,13 +528,12 @@ it.layer(NodeServices.layer)("work lane decider", (it) => {
     }),
   );
 
-  it.effect("always rejects completion.request with the F2 message", () =>
+  it.effect("enforces the completion gate and completes a valid deliverable", () =>
     Effect.gen(function* () {
       const states: ReadonlyArray<WorkLaneState> = [
         "queued",
         "planned",
         "executing",
-        "deliverable-ready",
         "completed",
       ];
       for (const state of states) {
@@ -446,8 +546,52 @@ it.layer(NodeServices.layer)("work lane decider", (it) => {
           },
           readModel: makeReadModel([makeWorkLane({ state })]),
         }).pipe(Effect.flip);
-        expectInvariant(error, "completion gate reserved until F2");
+        expectInvariant(
+          error,
+          state === "completed" ? "terminal" : "deliverable-ready",
+        );
       }
+
+      const missingDeliverable = yield* decideOrchestrationCommand({
+        command: {
+          type: "lane.completion.request",
+          commandId: CommandId.make("cmd-completion-missing-deliverable"),
+          laneId: LANE_ID,
+          requestedAt: NOW,
+        },
+        readModel: makeReadModel([
+          makeWorkLane({
+            state: "deliverable-ready",
+            activePlanRevisionId: PlanRevisionId.make("plan-complete"),
+            sourceTruthRevisionId: SourceTruthRevisionId.make("str-complete"),
+            sourceTruthOwnershipOverlap: "exclusive",
+          }),
+        ]),
+      }).pipe(Effect.flip);
+      expectInvariant(missingDeliverable, "requires a registered deliverable");
+
+      const completed = yield* decideOrchestrationCommand({
+        command: {
+          type: "lane.completion.request",
+          commandId: CommandId.make("cmd-completion-valid"),
+          laneId: LANE_ID,
+          requestedAt: NOW,
+        },
+        readModel: makeReadModel([
+          makeWorkLane({
+            state: "deliverable-ready",
+            activePlanRevisionId: PlanRevisionId.make("plan-complete"),
+            sourceTruthRevisionId: SourceTruthRevisionId.make("str-complete"),
+            sourceTruthOwnershipOverlap: "exclusive",
+            deliverableIds: [DeliverableId.make("deliverable-complete")],
+          }),
+        ]),
+      });
+      const completedEvent = payloadOf<{ toState: WorkLaneState }>(
+        asEvents(completed)[0],
+        "lane.state-changed",
+      );
+      expect(completedEvent.toState).toBe("completed");
     }),
   );
 
@@ -855,7 +999,7 @@ it.layer(NodeServices.layer)("work lane decider", (it) => {
           }),
         ]),
       }).pipe(Effect.flip);
-      expectInvariant(overlap, "ownership overlap is 'overlap'");
+      expectInvariant(overlap, "requires exclusive or not-applicable source-truth ownership");
 
       const gitOp = yield* decideOrchestrationCommand({
         command: {
@@ -934,6 +1078,34 @@ it.layer(NodeServices.layer)("work lane decider", (it) => {
         }).pipe(Effect.flip);
         expectInvariant(terminalMeta, "is terminal");
       }
+    }),
+  );
+
+  it.effect("binds source-truth receipts to the lane environment and worktree", () =>
+    Effect.gen(function* () {
+      const environmentMismatch = yield* decideOrchestrationCommand({
+        command: {
+          type: "source-truth.preflight.record",
+          commandId: CommandId.make("cmd-source-truth-environment-mismatch"),
+          laneId: LANE_ID,
+          revision: makeSourceTruthRevision({ environmentId: EnvironmentId.make("env-other") }),
+          recordedAt: NOW,
+        },
+        readModel: makeReadModel([makeWorkLane({ state: "planned" })]),
+      }).pipe(Effect.flip);
+      expectInvariant(environmentMismatch, "does not match lane environmentId");
+
+      const worktreeMismatch = yield* decideOrchestrationCommand({
+        command: {
+          type: "source-truth.preflight.record",
+          commandId: CommandId.make("cmd-source-truth-worktree-mismatch"),
+          laneId: LANE_ID,
+          revision: makeSourceTruthRevision({ worktreePath: "/tmp/worktrees/other" }),
+          recordedAt: NOW,
+        },
+        readModel: makeReadModel([makeWorkLane({ state: "planned" })]),
+      }).pipe(Effect.flip);
+      expectInvariant(worktreeMismatch, "does not match lane worktreePath");
     }),
   );
 
