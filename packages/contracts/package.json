@@ -26,6 +26,10 @@
     "./sourceTruth": {
       "types": "./src/sourceTruth.ts",
       "import": "./src/sourceTruth.ts"
+    },
+    "./agentAssignment": {
+      "types": "./src/agentAssignment.ts",
+      "import": "./src/agentAssignment.ts"
     }
   },
   "scripts": {
