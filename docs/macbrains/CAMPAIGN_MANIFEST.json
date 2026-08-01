@@ -11,25 +11,35 @@
     "integrator": {
       "branch": "macbrains/integrator-wave0",
       "worktree": "/Users/nayte/Projects/ANE-Lab/worktrees/t3code-macbrains-integrator-wave0",
-      "packages": ["WAVE0"]
+      "packages": [
+        "WAVE0"
+      ]
     },
     "workerA": {
       "role": "Truth Gate Engineer",
       "branch": "macbrains/f2-completion-gate",
       "worktree": "/Users/nayte/Projects/ANE-Lab/worktrees/t3code-macbrains-f2-completion-gate",
-      "packages": ["F2"]
+      "packages": [
+        "F2"
+      ]
     },
     "workerB": {
       "role": "Director and Worker Runtime Engineer",
       "branch": "macbrains/f3-agent-topology",
       "worktree": "/Users/nayte/Projects/ANE-Lab/worktrees/t3code-macbrains-f3-agent-topology",
-      "packages": ["F3", "P0"]
+      "packages": [
+        "F3",
+        "P0"
+      ]
     },
     "workerC": {
       "role": "Visible T3 Experience Engineer",
       "branch": "macbrains/f5-command-center",
       "worktree": "/Users/nayte/Projects/ANE-Lab/worktrees/t3code-macbrains-f5-command-center",
-      "packages": ["F5", "F6"]
+      "packages": [
+        "F5",
+        "F6"
+      ]
     }
   },
   "canonicalDocuments": [
@@ -54,7 +64,8 @@
     "docs/macbrains/FAMILY_EXECUTION_BOARD.md",
     "docs/macbrains/FAMILY_OWNERSHIP.md",
     "docs/macbrains/WORKER_LAUNCH_PACKETS.md",
-    "docs/macbrains/receipts/WAVE0_INTEGRATOR.md"
+    "docs/macbrains/receipts/WAVE0_INTEGRATOR.md",
+    "docs/macbrains/receipts/WAVE0_CONTROL.md"
   ],
   "statusVocabulary": [
     "NOT_STARTED",
