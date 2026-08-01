@@ -285,6 +285,30 @@ it("parses GitHub auth JSON from stdout when stderr has warnings", () => {
   );
 });
 
+it("parses the human-readable output emitted by gh auth status", () => {
+  const auth = GitHubSourceControlProvider.discovery.parseAuth(
+    processResult(`github.com
+  ✓ Logged in to github.com account active-user (keyring)
+  - Active account: true
+  - Git operations protocol: ssh
+  - Token: redacted
+`),
+  );
+
+  assert.deepStrictEqual(
+    {
+      status: auth.status,
+      account: auth.account,
+      host: auth.host,
+    },
+    {
+      status: "authenticated",
+      account: Option.some("active-user"),
+      host: Option.some("github.com"),
+    },
+  );
+});
+
 it("parses GitHub auth status accounts by host and active state", () => {
   assert.deepStrictEqual(
     parseGitHubAuthStatus(

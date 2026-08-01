@@ -35,9 +35,9 @@ function nonEmptyString(value: string): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
-export function parseGitHubAuthStatus(text: string): GitHubAuthStatus {
+function parseGitHubAuthStatusJson(text: string): GitHubAuthStatus | undefined {
   return Option.match(decodeGitHubAuthStatusJson(text), {
-    onNone: () => ({ parsed: false, accounts: [] }),
+    onNone: () => undefined,
     onSome: (status) =>
       ({
         parsed: true,
@@ -60,6 +60,57 @@ export function parseGitHubAuthStatus(text: string): GitHubAuthStatus {
         ),
       }) satisfies GitHubAuthStatus,
   });
+}
+
+function parseGitHubAuthStatusText(text: string): GitHubAuthStatus {
+  const accounts: GitHubAuthStatusAccount[] = [];
+  let current: GitHubAuthStatusAccount | undefined;
+
+  const flush = () => {
+    if (current !== undefined) {
+      accounts.push(current);
+      current = undefined;
+    }
+  };
+
+  for (const rawLine of text.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (line.length === 0) continue;
+
+    const loggedIn = /logged in to\s+([^\s]+)\s+account\s+([^\s(]+)/iu.exec(line);
+    if (loggedIn) {
+      const host = loggedIn[1];
+      const account = loggedIn[2];
+      if (host === undefined || account === undefined) continue;
+
+      flush();
+      current = {
+        host: host.toLowerCase(),
+        account,
+        authenticated: true,
+        active: true,
+        error: null,
+      };
+      continue;
+    }
+
+    if (current === undefined) continue;
+
+    const active = /active account:\s*(true|false)\b/iu.exec(line);
+    if (active) {
+      const activeValue = active[1];
+      if (activeValue !== undefined) {
+        current = { ...current, active: activeValue.toLowerCase() === "true" };
+      }
+    }
+  }
+
+  flush();
+  return { parsed: accounts.length > 0, accounts };
+}
+
+export function parseGitHubAuthStatus(text: string): GitHubAuthStatus {
+  return parseGitHubAuthStatusJson(text) ?? parseGitHubAuthStatusText(text);
 }
 
 export function findAuthenticatedGitHubAccount(
