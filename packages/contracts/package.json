@@ -26,6 +26,10 @@
     "./sourceTruth": {
       "types": "./src/sourceTruth.ts",
       "import": "./src/sourceTruth.ts"
+    },
+    "./completionGate": {
+      "types": "./src/completionGate.ts",
+      "import": "./src/completionGate.ts"
     }
   },
   "scripts": {

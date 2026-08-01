@@ -215,6 +215,9 @@ export function createEmptyReadModel(nowIso: string): OrchestrationReadModel {
     projects: [],
     threads: [],
     lanes: [],
+    acceptanceCriteria: [],
+    laneChecks: [],
+    laneCompletionEvidence: [],
     updatedAt: nowIso,
   };
 }
@@ -780,6 +783,9 @@ export function projectEvent(
       return decodeForEvent(LaneCreatedPayload, event.payload, event.type, "payload").pipe(
         Effect.map((payload) => {
           const existing = nextBase.lanes.find((entry) => entry.id === payload.lane.id);
+          const withoutLaneCriteria = (nextBase.acceptanceCriteria ?? []).filter(
+            (criterion) => criterion.laneId !== payload.lane.id,
+          );
           return {
             ...nextBase,
             lanes: existing
@@ -787,6 +793,7 @@ export function projectEvent(
                   entry.id === payload.lane.id ? payload.lane : entry,
                 )
               : [...nextBase.lanes, payload.lane],
+            acceptanceCriteria: [...withoutLaneCriteria, ...payload.acceptanceCriteria],
           };
         }),
       );
@@ -795,6 +802,9 @@ export function projectEvent(
       return decodeForEvent(LaneImportedPayload, event.payload, event.type, "payload").pipe(
         Effect.map((payload) => {
           const existing = nextBase.lanes.find((entry) => entry.id === payload.lane.id);
+          const withoutLaneCriteria = (nextBase.acceptanceCriteria ?? []).filter(
+            (criterion) => criterion.laneId !== payload.lane.id,
+          );
           return {
             ...nextBase,
             lanes: existing
@@ -802,6 +812,7 @@ export function projectEvent(
                   entry.id === payload.lane.id ? payload.lane : entry,
                 )
               : [...nextBase.lanes, payload.lane],
+            acceptanceCriteria: [...withoutLaneCriteria, ...payload.acceptanceCriteria],
           };
         }),
       );

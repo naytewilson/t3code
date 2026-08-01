@@ -1687,6 +1687,12 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                 projects,
                 threads,
                 lanes: workLaneRows.map((row) => row.lane),
+                // F2: Integrator/full projection wiring will populate these from
+                // acceptance-criteria / check / evidence tables. Empty defaults
+                // fail closed in evaluateCompletionGate until that lands.
+                acceptanceCriteria: [],
+                laneChecks: [],
+                laneCompletionEvidence: [],
                 updatedAt: updatedAt ?? "1970-01-01T00:00:00.000Z",
               } satisfies OrchestrationReadModel;
             }),

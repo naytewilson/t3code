@@ -37,6 +37,10 @@ import {
   isAllowedWorkLaneSupersede,
   requireAllowedWorkLaneTransition,
 } from "./workLaneTransitions.ts";
+import {
+  evaluateCompletionGate,
+  formatCompletionGateDenial,
+} from "./completionGate.ts";
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
@@ -1673,6 +1677,23 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           new OrchestrationCommandInvariantError({
             commandType: command.type,
             detail: `Lane '${command.laneId}' requires a registered deliverable before completion.`,
+          }),
+        );
+      }
+      const gate = evaluateCompletionGate({
+        lane,
+        acceptanceCriteria: readModel.acceptanceCriteria ?? [],
+        checks: readModel.laneChecks ?? [],
+        evidence:
+          (readModel.laneCompletionEvidence ?? []).find(
+            (entry) => entry.laneId === command.laneId,
+          ) ?? null,
+      });
+      if (!gate.ok) {
+        return yield* Effect.fail(
+          new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail: `Lane '${command.laneId}' completion rejected: ${formatCompletionGateDenial(gate)}.`,
           }),
         );
       }

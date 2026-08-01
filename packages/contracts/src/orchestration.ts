@@ -56,11 +56,13 @@ import {
   SourceTruthPreflightRecordedPayload,
   SourceTruthRefreshRequestCommand,
   SourceTruthRefreshRequestedPayload,
+  AcceptanceCriterion,
   WorkLane,
   WorkLaneClientCommand,
   WorkLaneDetailSnapshot,
   WorkLaneShell,
 } from "./workLane.ts";
+import { LaneCheck, LaneCompletionEvidence } from "./completionGate.ts";
 
 export const ORCHESTRATION_WS_METHODS = {
   dispatchCommand: "orchestration.dispatchCommand",
@@ -424,6 +426,16 @@ export const OrchestrationReadModel = Schema.Struct({
   projects: Schema.Array(OrchestrationProject),
   threads: Schema.Array(OrchestrationThread),
   lanes: Schema.Array(WorkLane).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  /**
+   * F2 — projected acceptance criteria consulted by the completion gate.
+   * Optional on the Type so legacy read-model fixtures stay valid; decider
+   * treats missing as `[]` (fail closed when the lane references criteria).
+   */
+  acceptanceCriteria: Schema.optionalKey(Schema.Array(AcceptanceCriterion)),
+  /** F2 — projected checks consulted by the completion gate. */
+  laneChecks: Schema.optionalKey(Schema.Array(LaneCheck)),
+  /** F2 — verifier / UI / completion-report evidence per lane. */
+  laneCompletionEvidence: Schema.optionalKey(Schema.Array(LaneCompletionEvidence)),
   updatedAt: IsoDateTime,
 });
 export type OrchestrationReadModel = typeof OrchestrationReadModel.Type;

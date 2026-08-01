@@ -5,8 +5,10 @@ import {
   EnvironmentId,
   PlanRevisionId,
   ProjectId,
+  ReceiptId,
   SourceTruthRevisionId,
   WorkLaneId,
+  type AcceptanceCriterion,
   type OrchestrationCommand,
   type OrchestrationEvent,
   type OrchestrationReadModel,
@@ -15,6 +17,11 @@ import {
   type WorkLane,
   type WorkLaneState,
 } from "@t3tools/contracts";
+import {
+  CheckId,
+  type LaneCheck,
+  type LaneCompletionEvidence,
+} from "@t3tools/contracts/completionGate";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -118,7 +125,14 @@ function makeSourceTruthRevision(
   };
 }
 
-function makeReadModel(lanes: ReadonlyArray<WorkLane> = []): OrchestrationReadModel {
+function makeReadModel(
+  lanes: ReadonlyArray<WorkLane> = [],
+  extras: {
+    readonly acceptanceCriteria?: ReadonlyArray<AcceptanceCriterion>;
+    readonly laneChecks?: ReadonlyArray<LaneCheck>;
+    readonly laneCompletionEvidence?: ReadonlyArray<LaneCompletionEvidence>;
+  } = {},
+): OrchestrationReadModel {
   return {
     ...createEmptyReadModel(NOW),
     projects: [
@@ -134,6 +148,63 @@ function makeReadModel(lanes: ReadonlyArray<WorkLane> = []): OrchestrationReadMo
       },
     ],
     lanes,
+    acceptanceCriteria: extras.acceptanceCriteria ?? [],
+    laneChecks: extras.laneChecks ?? [],
+    laneCompletionEvidence: extras.laneCompletionEvidence ?? [],
+  };
+}
+
+const COMPLETION_CRITERION_ID = AcceptanceCriterionId.make("crit-complete");
+
+function makeSatisfiedCompletionExtras(): {
+  readonly acceptanceCriteria: ReadonlyArray<AcceptanceCriterion>;
+  readonly laneChecks: ReadonlyArray<LaneCheck>;
+  readonly laneCompletionEvidence: ReadonlyArray<LaneCompletionEvidence>;
+} {
+  return {
+    acceptanceCriteria: [
+      {
+        id: COMPLETION_CRITERION_ID,
+        laneId: LANE_ID,
+        description: "Completion evidence present",
+        category: "correctness",
+        required: true,
+        status: "satisfied",
+        supportingReceiptIds: [ReceiptId.make("receipt-crit")],
+      },
+    ],
+    laneChecks: [
+      {
+        id: CheckId.make("check-complete"),
+        laneId: LANE_ID,
+        criterionId: COMPLETION_CRITERION_ID,
+        title: "unit tests",
+        required: true,
+        status: "passed",
+        skipPermitted: false,
+        fingerprint: "fp-1",
+        supportingReceiptIds: [ReceiptId.make("receipt-check")],
+        updatedAt: NOW,
+      },
+    ],
+    laneCompletionEvidence: [
+      {
+        laneId: LANE_ID,
+        verifierDecision: "accepted",
+        verifierReceiptId: ReceiptId.make("receipt-verifier"),
+        uiAcceptanceStatus: "not-required",
+        uiAcceptanceReceiptId: null,
+        completionReport: {
+          proven: "Completion gate accepted with full evidence.",
+          missingEvidence: "None in this fixture.",
+          possiblyWrongOrOverstated: "None.",
+          exactNextAction: "Ship F2 wiring.",
+          whatDoesNotCountAsCompletion: "Narrative-only done claims.",
+          safeContinuationContext: "decider.workLane.test fixture",
+        },
+        updatedAt: NOW,
+      },
+    ],
   };
 }
 
@@ -570,10 +641,10 @@ it.layer(NodeServices.layer)("work lane decider", (it) => {
       }).pipe(Effect.flip);
       expectInvariant(missingDeliverable, "requires a registered deliverable");
 
-      const completed = yield* decideOrchestrationCommand({
+      const missingEvidence = yield* decideOrchestrationCommand({
         command: {
           type: "lane.completion.request",
-          commandId: CommandId.make("cmd-completion-valid"),
+          commandId: CommandId.make("cmd-completion-missing-evidence"),
           laneId: LANE_ID,
           requestedAt: NOW,
         },
@@ -586,12 +657,156 @@ it.layer(NodeServices.layer)("work lane decider", (it) => {
             deliverableIds: [DeliverableId.make("deliverable-complete")],
           }),
         ]),
+      }).pipe(Effect.flip);
+      expectInvariant(missingEvidence, "completion rejected");
+
+      const completed = yield* decideOrchestrationCommand({
+        command: {
+          type: "lane.completion.request",
+          commandId: CommandId.make("cmd-completion-valid"),
+          laneId: LANE_ID,
+          requestedAt: NOW,
+        },
+        readModel: makeReadModel(
+          [
+            makeWorkLane({
+              state: "deliverable-ready",
+              activePlanRevisionId: PlanRevisionId.make("plan-complete"),
+              sourceTruthRevisionId: SourceTruthRevisionId.make("str-complete"),
+              sourceTruthOwnershipOverlap: "exclusive",
+              deliverableIds: [DeliverableId.make("deliverable-complete")],
+              acceptanceCriterionIds: [COMPLETION_CRITERION_ID],
+            }),
+          ],
+          makeSatisfiedCompletionExtras(),
+        ),
       });
       const completedEvent = payloadOf<{ toState: WorkLaneState }>(
         asEvents(completed)[0],
         "lane.state-changed",
       );
       expect(completedEvent.toState).toBe("completed");
+    }),
+  );
+
+  it.effect("rejects completion for a pending criterion then accepts after evidence", () =>
+    Effect.gen(function* () {
+      const criterionId = AcceptanceCriterionId.make("crit-demo");
+      const readyLane = makeWorkLane({
+        state: "deliverable-ready",
+        activePlanRevisionId: PlanRevisionId.make("plan-demo"),
+        sourceTruthRevisionId: SourceTruthRevisionId.make("str-demo"),
+        sourceTruthOwnershipOverlap: "exclusive",
+        deliverableIds: [DeliverableId.make("deliverable-demo")],
+        acceptanceCriterionIds: [criterionId],
+      });
+
+      const rejected = yield* decideOrchestrationCommand({
+        command: {
+          type: "lane.completion.request",
+          commandId: CommandId.make("cmd-completion-pending-criterion"),
+          laneId: LANE_ID,
+          requestedAt: NOW,
+        },
+        readModel: makeReadModel([readyLane], {
+          acceptanceCriteria: [
+            {
+              id: criterionId,
+              laneId: LANE_ID,
+              description: "Demo criterion",
+              category: "test",
+              required: true,
+              status: "pending",
+              supportingReceiptIds: [],
+            },
+          ],
+          laneChecks: [
+            {
+              id: CheckId.make("check-demo"),
+              laneId: LANE_ID,
+              criterionId,
+              title: "demo test",
+              required: true,
+              status: "not-run",
+              skipPermitted: false,
+              fingerprint: null,
+              supportingReceiptIds: [],
+              updatedAt: NOW,
+            },
+          ],
+          laneCompletionEvidence: [
+            {
+              laneId: LANE_ID,
+              verifierDecision: "absent",
+              verifierReceiptId: null,
+              uiAcceptanceStatus: "not-required",
+              uiAcceptanceReceiptId: null,
+              completionReport: null,
+              updatedAt: NOW,
+            },
+          ],
+        }),
+      }).pipe(Effect.flip);
+      expectInvariant(rejected, "pending");
+
+      const accepted = yield* decideOrchestrationCommand({
+        command: {
+          type: "lane.completion.request",
+          commandId: CommandId.make("cmd-completion-after-evidence"),
+          laneId: LANE_ID,
+          requestedAt: LATER,
+        },
+        readModel: makeReadModel([readyLane], {
+          acceptanceCriteria: [
+            {
+              id: criterionId,
+              laneId: LANE_ID,
+              description: "Demo criterion",
+              category: "test",
+              required: true,
+              status: "satisfied",
+              supportingReceiptIds: [ReceiptId.make("receipt-demo-crit")],
+            },
+          ],
+          laneChecks: [
+            {
+              id: CheckId.make("check-demo"),
+              laneId: LANE_ID,
+              criterionId,
+              title: "demo test",
+              required: true,
+              status: "passed",
+              skipPermitted: false,
+              fingerprint: "fp-demo",
+              supportingReceiptIds: [ReceiptId.make("receipt-demo-check")],
+              updatedAt: LATER,
+            },
+          ],
+          laneCompletionEvidence: [
+            {
+              laneId: LANE_ID,
+              verifierDecision: "accepted",
+              verifierReceiptId: ReceiptId.make("receipt-demo-verifier"),
+              uiAcceptanceStatus: "not-required",
+              uiAcceptanceReceiptId: null,
+              completionReport: {
+                proven: "Pending criterion rejected; satisfied evidence accepted.",
+                missingEvidence: "None in this demo fixture.",
+                possiblyWrongOrOverstated: "None.",
+                exactNextAction: "Wire projection population.",
+                whatDoesNotCountAsCompletion: "Deliverable without verifier.",
+                safeContinuationContext: "F2 reject-then-accept demo",
+              },
+              updatedAt: LATER,
+            },
+          ],
+        }),
+      });
+      const acceptedEvent = payloadOf<{ toState: WorkLaneState }>(
+        asEvents(accepted)[0],
+        "lane.state-changed",
+      );
+      expect(acceptedEvent.toState).toBe("completed");
     }),
   );
 
