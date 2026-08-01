@@ -3,6 +3,35 @@
   "campaignId": "macbrains-t3code-agent-workflow-overhaul",
   "title": "MacBrains T3 Code Agent Workflow Overhaul",
   "specificationBranch": "macbrains/agent-workflow-overhaul",
+  "integrationBranch": "macbrains/integration",
+  "baselineCommit": "57b800cd3b889c33a0973c6f7ce9c6ea8698fb72",
+  "activeWave": 1,
+  "firstProductMilestone": "visible-director-real-worker-verifier-truthful-completion",
+  "familyLanes": {
+    "integrator": {
+      "branch": "macbrains/integrator-wave0",
+      "worktree": "/Users/nayte/Projects/ANE-Lab/worktrees/t3code-macbrains-integrator-wave0",
+      "packages": ["WAVE0"]
+    },
+    "workerA": {
+      "role": "Truth Gate Engineer",
+      "branch": "macbrains/f2-completion-gate",
+      "worktree": "/Users/nayte/Projects/ANE-Lab/worktrees/t3code-macbrains-f2-completion-gate",
+      "packages": ["F2"]
+    },
+    "workerB": {
+      "role": "Director and Worker Runtime Engineer",
+      "branch": "macbrains/f3-agent-topology",
+      "worktree": "/Users/nayte/Projects/ANE-Lab/worktrees/t3code-macbrains-f3-agent-topology",
+      "packages": ["F3", "P0"]
+    },
+    "workerC": {
+      "role": "Visible T3 Experience Engineer",
+      "branch": "macbrains/f5-command-center",
+      "worktree": "/Users/nayte/Projects/ANE-Lab/worktrees/t3code-macbrains-f5-command-center",
+      "packages": ["F5", "F6"]
+    }
+  },
   "canonicalDocuments": [
     "MACBRAINS.md",
     "docs/macbrains/README.md",
@@ -21,7 +50,11 @@
     "docs/macbrains/PULL_TO_MAC.md",
     "docs/macbrains/IMPLEMENTATION_HANDOFF.md",
     "docs/macbrains/F0_EXECUTION_PROMPT.md",
-    "docs/macbrains/AGENT_EXECUTION_PROMPT.md"
+    "docs/macbrains/AGENT_EXECUTION_PROMPT.md",
+    "docs/macbrains/FAMILY_EXECUTION_BOARD.md",
+    "docs/macbrains/FAMILY_OWNERSHIP.md",
+    "docs/macbrains/WORKER_LAUNCH_PACKETS.md",
+    "docs/macbrains/receipts/WAVE0_INTEGRATOR.md"
   ],
   "statusVocabulary": [
     "NOT_STARTED",
@@ -82,12 +115,13 @@
     {
       "id": "F2",
       "title": "Checks, acceptance criteria, and completion gate",
-      "status": "NOT_STARTED",
+      "status": "IN_PROGRESS",
       "dependencies": [
         "F0",
         "F1"
       ],
       "ownershipGroup": "orchestration-completion",
+      "ownerLane": "workerA",
       "advisorRequired": true,
       "primaryAcceptancePrefixes": [
         "H"
@@ -96,16 +130,18 @@
         "D0",
         "D1",
         "E0"
-      ]
+      ],
+      "wave1Note": "Nayte board priority: first blocker for truthful completion; may add minimal F1 substrate if gate cannot close without it."
     },
     {
       "id": "F3",
       "title": "Agent assignments and topology",
-      "status": "NOT_STARTED",
+      "status": "IN_PROGRESS",
       "dependencies": [
         "F0"
       ],
       "ownershipGroup": "assignments-topology",
+      "ownerLane": "workerB",
       "advisorRequired": true,
       "primaryAcceptancePrefixes": [
         "D"
@@ -113,7 +149,8 @@
       "blocks": [
         "P0",
         "F6"
-      ]
+      ],
+      "wave1Note": "Includes necessary real ProviderService spawn path; no simulated workers."
     },
     {
       "id": "F4",
@@ -135,7 +172,7 @@
     {
       "id": "F5",
       "title": "Command Center and projections",
-      "status": "NOT_STARTED",
+      "status": "IN_PROGRESS",
       "dependencies": [
         "F0",
         "F1",
@@ -143,18 +180,20 @@
         "F3"
       ],
       "ownershipGroup": "client-runtime-command-center",
+      "ownerLane": "workerC",
       "advisorRequired": false,
       "primaryAcceptancePrefixes": [
         "K"
       ],
       "blocks": [
         "F6"
-      ]
+      ],
+      "wave1Note": "Shells may use replaceable mock adapters; must not invent a second domain model."
     },
     {
       "id": "F6",
       "title": "Lane detail and cross-surface controls",
-      "status": "NOT_STARTED",
+      "status": "IN_PROGRESS",
       "dependencies": [
         "F2",
         "F3",
@@ -162,6 +201,7 @@
         "F5"
       ],
       "ownershipGroup": "web-desktop-mobile-lane-ui",
+      "ownerLane": "workerC",
       "advisorRequired": false,
       "primaryAcceptancePrefixes": [
         "J",
@@ -170,7 +210,8 @@
       ],
       "blocks": [
         "E0"
-      ]
+      ],
+      "wave1Note": "First useful lane/agent-tree controls only; full mobile deferred to Wave 5."
     },
     {
       "id": "P0",

@@ -19,23 +19,27 @@ Read in this order:
 15. [`IMPLEMENTATION_HANDOFF.md`](./IMPLEMENTATION_HANDOFF.md) — exact campaign handoff, evidence gaps, first package ownership, and stop conditions.
 16. [`F0_EXECUTION_PROMPT.md`](./F0_EXECUTION_PROMPT.md) — complete launch prompt for the first implementation package.
 17. [`AGENT_EXECUTION_PROMPT.md`](./AGENT_EXECUTION_PROMPT.md) — root prompt for all implementation agents.
+18. [`FAMILY_EXECUTION_BOARD.md`](./FAMILY_EXECUTION_BOARD.md) — Nayte-approved family waves and product milestone.
+19. [`FAMILY_OWNERSHIP.md`](./FAMILY_OWNERSHIP.md) — active lanes, worktrees, shared-file rule, and path ownership.
+20. [`receipts/WAVE0_INTEGRATOR.md`](./receipts/WAVE0_INTEGRATOR.md) — Wave 0 integrator evidence.
 
 ## Canonical status
 
 The repository and current tool output remain authoritative. These documents define intent and acceptance but do not prove current implementation state.
 
-## First implementation target
+## Current family target
 
-Start with `F0 — Work lane and source-truth contracts`. Do not begin disconnected UI work. The first agent must:
+Wave 0 establishes control on baseline `57b800cd3` / branch `macbrains/integration`. Active Wave 1 packages:
 
-- create an isolated worktree from the current fork target branch;
-- run source-truth preflight;
-- inspect existing orchestration contracts, decider, invariants, projector, projection persistence, migrations, client-runtime models, and focused tests;
-- define an ownership boundary that avoids parallel edits to shared contract files;
-- obtain independent architecture advice before changing persistence/domain schemas;
-- implement the full F0 vertical slice with migration and focused proof.
+- Worker A — F2 truthful completion gate
+- Worker B — F3 director/worker assignments + real provider spawning
+- Worker C — F5/F6 visible Projects + agent-tree vertical slice
 
-Use `F0_EXECUTION_PROMPT.md` as the launch packet, with the actual repository/worktree/branch/base SHA filled from current preflight.
+Read `FAMILY_OWNERSHIP.md` before editing. Do not work in primary `main`.
+
+## First implementation target (historical)
+
+F0 work-lane/source-truth contracts were the original first package (`F0_EXECUTION_PROMPT.md`). F0 is present on baseline `57b800cd3` as `IMPLEMENTED_UNVERIFIED` pending independent verification. New workers start from the family board above, not by re-opening primary `main`.
 
 ## Specification validation
 
