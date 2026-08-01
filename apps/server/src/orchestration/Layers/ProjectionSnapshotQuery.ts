@@ -1178,6 +1178,20 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       `,
   });
 
+  const listAcceptanceCriterionRows = SqlSchema.findAll({
+    Request: Schema.Void,
+    Result: ProjectionLaneAcceptanceCriterionDbRowSchema,
+    execute: () =>
+      sql`
+        SELECT
+          id,
+          lane_id AS "laneId",
+          criterion_json AS "criterion"
+        FROM projection_lane_acceptance_criteria
+        ORDER BY lane_id ASC, id ASC
+      `,
+  });
+
   const getSnapshot: ProjectionSnapshotQueryShape["getSnapshot"] = () =>
     sql
       .withTransaction(
@@ -1541,6 +1555,14 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
               ),
             ),
           ),
+          listAcceptanceCriterionRows(undefined).pipe(
+            Effect.mapError(
+              toPersistenceSqlOrDecodeError(
+                "ProjectionSnapshotQuery.getCommandReadModel:listAcceptanceCriteria:query",
+                "ProjectionSnapshotQuery.getCommandReadModel:listAcceptanceCriteria:decodeRows",
+              ),
+            ),
+          ),
         ]),
       )
       .pipe(
@@ -1553,6 +1575,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             latestTurnRows,
             workLaneRows,
             stateRows,
+            acceptanceCriterionRows,
           ]) =>
             Effect.sync(() => {
               let updatedAt: string | null = null;
@@ -1687,10 +1710,9 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                 projects,
                 threads,
                 lanes: workLaneRows.map((row) => row.lane),
-                // F2: Integrator/full projection wiring will populate these from
-                // acceptance-criteria / check / evidence tables. Empty defaults
-                // fail closed in evaluateCompletionGate until that lands.
-                acceptanceCriteria: [],
+                // F2 Integrator: criteria from projection table. Checks/evidence
+                // stay empty (fail closed) until check/evidence persistence lands.
+                acceptanceCriteria: acceptanceCriterionRows.map((row) => row.criterion),
                 laneChecks: [],
                 laneCompletionEvidence: [],
                 updatedAt: updatedAt ?? "1970-01-01T00:00:00.000Z",
