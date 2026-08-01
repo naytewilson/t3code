@@ -21,7 +21,8 @@ Read in this order:
 17. [`AGENT_EXECUTION_PROMPT.md`](./AGENT_EXECUTION_PROMPT.md) — root prompt for all implementation agents.
 18. [`FAMILY_EXECUTION_BOARD.md`](./FAMILY_EXECUTION_BOARD.md) — Nayte-approved family waves and product milestone.
 19. [`FAMILY_OWNERSHIP.md`](./FAMILY_OWNERSHIP.md) — active lanes, worktrees, shared-file rule, and path ownership.
-. [`receipts/WAVE0_CONTROL.md`](./receipts/WAVE0_CONTROL.md) — Wave 0 control checklist receipt.
+20. [`WORKER_LAUNCH_PACKETS.md`](./WORKER_LAUNCH_PACKETS.md) — Worker A/B/C launch contracts for Wave 1.
+21. [`receipts/WAVE0_CONTROL.md`](./receipts/WAVE0_CONTROL.md) — Wave 0 control checklist receipt.
 22. [`receipts/WAVE0_INTEGRATOR.md`](./receipts/WAVE0_INTEGRATOR.md) — Wave 0 integrator evidence.
 
 ## Canonical status
