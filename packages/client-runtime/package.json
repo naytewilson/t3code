@@ -127,6 +127,10 @@
       "types": "./src/state/workLanes.ts",
       "default": "./src/state/workLanes.ts"
     },
+    "./commandCenter": {
+      "types": "./src/commandCenter/index.ts",
+      "default": "./src/commandCenter/index.ts"
+    },
     "./state/thread-sort": {
       "types": "./src/state/threadSort.ts",
       "default": "./src/state/threadSort.ts"
