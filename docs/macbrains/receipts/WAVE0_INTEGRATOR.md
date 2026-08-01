@@ -2,45 +2,41 @@
 
 **Agent:** Cursor (Campaign Integrator)  
 **Task:** `macbrains-family-wave0-2026-07-31`  
-**Date:** 2026-07-31
+**Date:** 2026-07-31  
+**Branch HEAD at receipt update:** see `git rev-parse HEAD` on `macbrains/integrator-wave0`
 
 ## PROVEN
 
-1. **Baseline recoverable** — `57b800cd3b889c33a0973c6f7ce9c6ea8698fb72` exists; message `feat(orchestration): add workflow lanes and source-truth integration`.
-2. **Tracking corrected** — legacy branch `codex/t3code-workflow-integration-20260730` now tracks `origin/macbrains/integration` (was mismatched to `origin/cursor/f0-worklane-source-truth-7986`).
-3. **Canonical integration branch** — `macbrains/integration` @ `57b800cd3` pushed to `origin`.
-4. **Family branches + worktrees** created and pushed:
-   - `macbrains/integrator-wave0` → `.../t3code-macbrains-integrator-wave0`
+1. **Baseline recoverable** — `57b800cd3b889c33a0973c6f7ce9c6ea8698fb72` (`feat(orchestration): add workflow lanes and source-truth integration`) on all family tips.
+2. **Tracking corrected** — `codex/t3code-workflow-integration-20260730` tracks `origin/macbrains/integration` (was `origin/cursor/f0-worklane-source-truth-7986`).
+3. **Canonical integration branch** — `macbrains/integration` @ `57b800cd3` on `origin`.
+4. **Family branches + worktrees** (all @ `57b800cd3` unless noted):
+   - `macbrains/integrator-wave0` → `/Users/nayte/Projects/ANE-Lab/worktrees/t3code-macbrains-integrator-wave0`
    - `macbrains/f2-completion-gate` → `.../t3code-macbrains-f2-completion-gate`
    - `macbrains/f3-agent-topology` → `.../t3code-macbrains-f3-agent-topology`
    - `macbrains/f5-command-center` → `.../t3code-macbrains-f5-command-center`
-5. **Unowned dirty WIP preserved** — GitHub auth text-parse edits parked on `macbrains/recovery-g0-auth-wip-20260731` @ `60f10ada6` (not merged into integration).
-6. **Primary `main` left untouched** — dirty files in `/Users/nayte/Projects/t3code` were not absorbed.
-
-## ESTIMATED / PARTIAL
-
-1. **Node 24** — machine has Homebrew `node@24` **v24.18.1** and `~/.vite-plus/js_runtime/node/24.18.1`, which satisfy `package.json` engines `^24.13.1`. Exact pin `24.13.1` via nvm not installed this session.
-2. **vite-plus hooks** — `core.hooksPath=.vite-hooks/_` is present and hook scripts exist. Commit failure root cause was missing `node_modules` / unresolved `vite-plus` in the editing worktree, not missing hook installation.
+   - `macbrains/integration` → `.../t3code-macbrains-integration`
+5. **Unowned dirty WIP preserved** — `macbrains/recovery-g0-auth-wip-20260731` @ `60f10ada6` (not in integration).
+6. **Primary `main` left untouched** — dirty files in `/Users/nayte/Projects/t3code` not absorbed.
+7. **Node 24.13.1** — installed via nvm (`nvm install 24.13.1`); `.nvmrc` = `24.13.1`; engines `^24.13.1`.
+8. **vite-plus hook runner installed** — each family worktree has `.vite-hooks/_` and `core.hooksPath=.vite-hooks/_` after `vp config --no-agent`.
+9. **Ownership published** — `FAMILY_EXECUTION_BOARD.md`, `FAMILY_OWNERSHIP.md`, `WORKER_LAUNCH_PACKETS.md`.
 
 ## BLOCKED
 
-1. **`pnpm install` / full hook verification** — `FABLE_ADMIT klass=XL verdict=WAIT` at 2026-07-31 (~swap 89%, P=2). Heavy install deferred until ADMIT.
-2. Exact `nvm install 24.13.1` deferred for the same admit gate.
+1. **`pnpm install` / full `vp staged` smoke in family worktrees** — `FABLE_ADMIT klass=XL verdict=WAIT` (swap ≥85%, P=2 warn) at 2026-07-31 22:04:51. Deferred until ADMIT.
+2. Hook **execution** path still needs worktree `node_modules` (wiring alone ≠ proven staged lint).
 
-## Node establishment recipe (when ADMIT)
+## Node + hook recipe (when ADMIT)
 
 ```bash
-export PATH="/opt/homebrew/opt/node@24/bin:$PATH"   # v24.18.1 today
-# optional exact pin:
-# nvm install 24.13.1 && nvm use 24.13.1
+export NVM_DIR="$HOME/.nvm"; . "$NVM_DIR/nvm.sh"; nvm use 24.13.1
 cd /Users/nayte/Projects/ANE-Lab/worktrees/t3code-macbrains-integrator-wave0
 pnpm install
 pnpm prepare   # effect-tsgo patch && vp config --no-agent
-# prove: echo 'test' >/dev/null; git commit should run `vp staged` successfully on a real staged change
+# prove: real staged change commits through `vp staged`
 ```
 
-## Ownership published
+## Exact next action
 
-- `docs/macbrains/FAMILY_EXECUTION_BOARD.md`
-- `docs/macbrains/FAMILY_OWNERSHIP.md`
-- `.nvmrc` → `24.13.1`
+Launch Workers A/B/C in their worktrees per `WORKER_LAUNCH_PACKETS.md`. Integrator merges only on explicit integration requests. First combined product gate remains the Wave 2 visible director demo.
