@@ -60,17 +60,9 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   /** Server understands thread.snooze / thread.unsnooze commands. Same
       version-skew contract as threadSettlement. */
   threadSnooze: Schema.optionalKey(Schema.Boolean),
-  /** Server understands thread.pin / thread.unpin commands. Same
-      version-skew contract as threadSettlement. */
-  threadPinning: Schema.optionalKey(Schema.Boolean),
-  /** Server understands thread.pin.reorder (and orderKey on thread.pin).
-      Same version-skew contract as threadSettlement. */
-  threadPinReorder: Schema.optionalKey(Schema.Boolean),
-  /** Server understands regenerateTitle on thread.meta.update. Absent on
-      older servers, so clients hide the action instead of sending it. */
-  threadTitleRegeneration: Schema.optionalKey(Schema.Boolean),
-  /** Server persists a pull request reference on thread.meta.update. */
-  threadPullRequestLinking: Schema.optionalKey(Schema.Boolean),
+  /** Server understands work-lane / source-truth commands and shell.lanes.
+      Absent on pre-F0 servers — clients must not send lane commands under skew. */
+  workLanes: Schema.optionalKey(Schema.Boolean),
   /** The update path clients should offer for this server. Absent on
       servers that must be relaunched manually (dev checkouts, Windows
       foreground runs, pre-update servers). */

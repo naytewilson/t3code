@@ -89,6 +89,22 @@ export const orchestrationHttpApiLayer = HttpApiBuilder.group(
         }),
       )
       .handle(
+        "laneSnapshot",
+        Effect.fn("environment.orchestration.laneSnapshot")(function* (args) {
+          yield* annotateEnvironmentRequest(args.endpoint.name);
+          yield* requireEnvironmentScope(AuthOrchestrationReadScope);
+          const snapshot = yield* projectionSnapshotQuery.getLaneDetail(args.params.laneId).pipe(
+            Effect.catch((cause) =>
+              failEnvironmentInternal("orchestration_lane_snapshot_failed", cause),
+            ),
+          );
+          if (Option.isNone(snapshot)) {
+            return yield* failEnvironmentNotFound("lane_not_found");
+          }
+          return snapshot.value;
+        }),
+      )
+      .handle(
         "dispatch",
         Effect.fn("environment.orchestration.dispatch")(function* (args) {
           yield* annotateEnvironmentRequest(args.endpoint.name);

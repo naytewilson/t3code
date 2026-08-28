@@ -1,8 +1,15 @@
 import {
   EventId,
+  isWorkLaneTerminalState,
+  isWorkLaneWorktreeOwningState,
+  WORK_LANE_EXECUTION_START_STATES,
+  type BlockerId,
   type OrchestrationCommand,
   type OrchestrationEvent,
   type OrchestrationReadModel,
+  type WorkLane,
+  type WorkLaneId,
+  type WorkLaneState,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Crypto from "effect/Crypto";
@@ -13,14 +20,21 @@ import { OrchestrationCommandInvariantError } from "./Errors.ts";
 import {
   listThreadsByProjectId,
   requireActiveProjectWorkspaceRootAbsent,
+  requireLane,
+  requireLaneAbsent,
   requireProject,
   requireProjectAbsent,
   requireThread,
   requireThreadArchived,
   requireThreadAbsent,
   requireThreadNotArchived,
+  requireWorktreeExclusive,
 } from "./commandInvariants.ts";
 import { projectEvent } from "./projector.ts";
+import {
+  isAllowedWorkLaneSupersede,
+  requireAllowedWorkLaneTransition,
+} from "./workLaneTransitions.ts";
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
@@ -172,7 +186,110 @@ function withEventBase(
   );
 }
 
+function buildLaneCreated(input: {
+  readonly command: Extract<OrchestrationCommand, { type: "lane.create" }>;
+}): WorkLane {
+  const primaryThreadId = input.command.primaryThreadId ?? null;
+  return {
+    id: input.command.laneId,
+    projectId: input.command.projectId,
+    title: input.command.title,
+    taskContract: input.command.taskContract,
+    state: "queued",
+    priority: input.command.priority,
+    classification: input.command.classification,
+    environmentId: input.command.environmentId,
+    repositoryIdentity: input.command.repositoryIdentity ?? null,
+    baseRef: input.command.baseRef ?? null,
+    branch: input.command.branch ?? null,
+    worktreePath: input.command.worktreePath ?? null,
+    ownerAssignmentId: null,
+    advisorAssignmentIds: [],
+    verifierAssignmentIds: [],
+    sourceTruthRevisionId: null,
+    sourceTruthActiveGitOperation: "none",
+    sourceTruthOwnershipOverlap: "unknown",
+    activePlanRevisionId: null,
+    acceptanceCriterionIds: (input.command.acceptanceCriteria ?? []).map(
+      (criterion) => criterion.id,
+    ),
+    requiredReceiptKinds: [],
+    deliverableIds: [],
+    blockerIds: [],
+    primaryThreadId,
+    importedThreadId: null,
+    threadIds: primaryThreadId === null ? [] : [primaryThreadId],
+    legacyExecutorRef: null,
+    resumeState: null,
+    supersedingLaneId: null,
+    createdAt: input.command.createdAt,
+    updatedAt: input.command.createdAt,
+    completedAt: null,
+  };
+}
+
+function requireLaneMutable(input: {
+  readonly command: OrchestrationCommand;
+  readonly lane: WorkLane;
+}): Effect.Effect<void, OrchestrationCommandInvariantError> {
+  if (!isWorkLaneTerminalState(input.lane.state)) {
+    return Effect.void;
+  }
+  return Effect.fail(
+    new OrchestrationCommandInvariantError({
+      commandType: input.command.type,
+      detail: `Lane '${input.lane.id}' is terminal ('${input.lane.state}') and cannot accept '${input.command.type}'.`,
+    }),
+  );
+}
+
 type PlannedOrchestrationEvent = Omit<OrchestrationEvent, "sequence">;
+
+const emitLaneStateChanged = Effect.fn("emitLaneStateChanged")(function* ({
+  command,
+  laneId,
+  fromState,
+  toState,
+  occurredAt,
+  resumeState = null,
+  reason,
+  blockerId,
+  supersedingLaneId,
+}: {
+  readonly command: OrchestrationCommand;
+  readonly laneId: WorkLane["id"];
+  readonly fromState: WorkLaneState;
+  readonly toState: WorkLaneState;
+  readonly occurredAt: string;
+  readonly resumeState?: WorkLaneState | null;
+  readonly reason?: string;
+  readonly blockerId?: BlockerId;
+  readonly supersedingLaneId?: WorkLaneId;
+}): Effect.fn.Return<
+  PlannedOrchestrationEvent,
+  OrchestrationCommandInvariantError | PlatformError.PlatformError,
+  Crypto.Crypto
+> {
+  return {
+    ...(yield* withEventBase({
+      aggregateKind: "lane",
+      aggregateId: laneId,
+      occurredAt,
+      commandId: command.commandId,
+    })),
+    type: "lane.state-changed" as const,
+    payload: {
+      laneId,
+      fromState,
+      toState,
+      resumeState,
+      ...(reason !== undefined ? { reason } : {}),
+      ...(blockerId !== undefined ? { blockerId } : {}),
+      ...(supersedingLaneId !== undefined ? { supersedingLaneId } : {}),
+      updatedAt: occurredAt,
+    },
+  };
+});
 
 type DecideOrchestrationCommandResult =
   | PlannedOrchestrationEvent
@@ -1403,6 +1520,692 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         },
       };
       return [unsettledEvent, activityAppendedEvent];
+    }
+
+    case "lane.create": {
+      yield* requireProject({
+        readModel,
+        command,
+        projectId: command.projectId,
+      });
+      yield* requireLaneAbsent({
+        readModel,
+        command,
+        laneId: command.laneId,
+      });
+      const acceptanceCriteria = command.acceptanceCriteria ?? [];
+      for (const criterion of acceptanceCriteria) {
+        if (criterion.laneId !== command.laneId) {
+          return yield* Effect.fail(
+            new OrchestrationCommandInvariantError({
+              commandType: command.type,
+              detail: `Acceptance criterion '${criterion.id}' laneId '${criterion.laneId}' does not match lane '${command.laneId}'.`,
+            }),
+          );
+        }
+      }
+      const lane = buildLaneCreated({ command });
+      if (
+        lane.worktreePath !== null &&
+        isWorkLaneWorktreeOwningState(lane.state)
+      ) {
+        yield* requireWorktreeExclusive({
+          readModel,
+          command,
+          worktreePath: lane.worktreePath,
+          exceptLaneId: command.laneId,
+        });
+      }
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "lane",
+          aggregateId: command.laneId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "lane.created" as const,
+        payload: {
+          lane,
+          acceptanceCriteria,
+        },
+      };
+    }
+
+    case "lane.preflight.request": {
+      const lane = yield* requireLane({
+        readModel,
+        command,
+        laneId: command.laneId,
+      });
+      yield* requireAllowedWorkLaneTransition({
+        commandType: command.type,
+        from: lane.state,
+        to: "preflight",
+      });
+      return yield* emitLaneStateChanged({
+        command,
+        laneId: command.laneId,
+        fromState: lane.state,
+        toState: "preflight",
+        occurredAt: command.requestedAt,
+      });
+    }
+
+    case "lane.orientation.record": {
+      const lane = yield* requireLane({
+        readModel,
+        command,
+        laneId: command.laneId,
+      });
+      yield* requireAllowedWorkLaneTransition({
+        commandType: command.type,
+        from: lane.state,
+        to: "oriented",
+      });
+      return yield* emitLaneStateChanged({
+        command,
+        laneId: command.laneId,
+        fromState: lane.state,
+        toState: "oriented",
+        occurredAt: command.recordedAt,
+      });
+    }
+
+    case "lane.plan.propose": {
+      const lane = yield* requireLane({
+        readModel,
+        command,
+        laneId: command.laneId,
+      });
+      yield* requireAllowedWorkLaneTransition({
+        commandType: command.type,
+        from: lane.state,
+        to: "planned",
+      });
+      const stateChanged = yield* emitLaneStateChanged({
+        command,
+        laneId: command.laneId,
+        fromState: lane.state,
+        toState: "planned",
+        occurredAt: command.proposedAt,
+      });
+      const planProposed: PlannedOrchestrationEvent = {
+        ...(yield* withEventBase({
+          aggregateKind: "lane",
+          aggregateId: command.laneId,
+          occurredAt: command.proposedAt,
+          commandId: command.commandId,
+        })),
+        type: "lane.plan-proposed" as const,
+        payload: {
+          laneId: command.laneId,
+          planRevisionId: command.planRevisionId,
+          proposedAt: command.proposedAt,
+        },
+      };
+      return [stateChanged, planProposed];
+    }
+
+    case "lane.plan.activate": {
+      const lane = yield* requireLane({
+        readModel,
+        command,
+        laneId: command.laneId,
+      });
+      const planActivated: PlannedOrchestrationEvent = {
+        ...(yield* withEventBase({
+          aggregateKind: "lane",
+          aggregateId: command.laneId,
+          occurredAt: command.activatedAt,
+          commandId: command.commandId,
+        })),
+        type: "lane.plan-activated" as const,
+        payload: {
+          laneId: command.laneId,
+          planRevisionId: command.planRevisionId,
+          activatedAt: command.activatedAt,
+          updatedAt: command.activatedAt,
+        },
+      };
+      if (lane.state === "oriented") {
+        yield* requireAllowedWorkLaneTransition({
+          commandType: command.type,
+          from: lane.state,
+          to: "planned",
+        });
+        const stateChanged = yield* emitLaneStateChanged({
+          command,
+          laneId: command.laneId,
+          fromState: lane.state,
+          toState: "planned",
+          occurredAt: command.activatedAt,
+        });
+        return [planActivated, stateChanged];
+      }
+      return planActivated;
+    }
+
+    case "lane.execution.start": {
+      const lane = yield* requireLane({
+        readModel,
+        command,
+        laneId: command.laneId,
+      });
+      if (
+        !(WORK_LANE_EXECUTION_START_STATES as ReadonlyArray<string>).includes(lane.state)
+      ) {
+        return yield* Effect.fail(
+          new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail: `Lane '${command.laneId}' must be in planned|testing|reviewing|deliverable-ready to start execution (current: '${lane.state}').`,
+          }),
+        );
+      }
+      if (lane.sourceTruthRevisionId === null) {
+        return yield* Effect.fail(
+          new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail: `Lane '${command.laneId}' requires a source-truth revision before execution.`,
+          }),
+        );
+      }
+      if (lane.sourceTruthOwnershipOverlap === "overlap") {
+        return yield* Effect.fail(
+          new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail: `Lane '${command.laneId}' cannot execute while source-truth ownership overlap is 'overlap'.`,
+          }),
+        );
+      }
+      if (lane.sourceTruthActiveGitOperation !== "none") {
+        return yield* Effect.fail(
+          new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail: `Lane '${command.laneId}' cannot execute while git operation '${lane.sourceTruthActiveGitOperation}' is active.`,
+          }),
+        );
+      }
+      if (lane.classification === "substantial" && lane.worktreePath === null) {
+        return yield* Effect.fail(
+          new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail: `Substantial lane '${command.laneId}' requires a worktree path before execution.`,
+          }),
+        );
+      }
+      yield* requireWorktreeExclusive({
+        readModel,
+        command,
+        worktreePath: lane.worktreePath,
+        exceptLaneId: command.laneId,
+      });
+      yield* requireAllowedWorkLaneTransition({
+        commandType: command.type,
+        from: lane.state,
+        to: "executing",
+      });
+      return yield* emitLaneStateChanged({
+        command,
+        laneId: command.laneId,
+        fromState: lane.state,
+        toState: "executing",
+        occurredAt: command.startedAt,
+      });
+    }
+
+    case "lane.testing.start": {
+      const lane = yield* requireLane({
+        readModel,
+        command,
+        laneId: command.laneId,
+      });
+      yield* requireAllowedWorkLaneTransition({
+        commandType: command.type,
+        from: lane.state,
+        to: "testing",
+      });
+      return yield* emitLaneStateChanged({
+        command,
+        laneId: command.laneId,
+        fromState: lane.state,
+        toState: "testing",
+        occurredAt: command.startedAt,
+      });
+    }
+
+    case "lane.review.request": {
+      const lane = yield* requireLane({
+        readModel,
+        command,
+        laneId: command.laneId,
+      });
+      yield* requireAllowedWorkLaneTransition({
+        commandType: command.type,
+        from: lane.state,
+        to: "reviewing",
+      });
+      return yield* emitLaneStateChanged({
+        command,
+        laneId: command.laneId,
+        fromState: lane.state,
+        toState: "reviewing",
+        occurredAt: command.requestedAt,
+      });
+    }
+
+    case "lane.deliverable.register": {
+      const lane = yield* requireLane({
+        readModel,
+        command,
+        laneId: command.laneId,
+      });
+      const registered: PlannedOrchestrationEvent = {
+        ...(yield* withEventBase({
+          aggregateKind: "lane",
+          aggregateId: command.laneId,
+          occurredAt: command.registeredAt,
+          commandId: command.commandId,
+        })),
+        type: "lane.deliverable-registered" as const,
+        payload: {
+          laneId: command.laneId,
+          deliverableId: command.deliverableId,
+          registeredAt: command.registeredAt,
+          updatedAt: command.registeredAt,
+        },
+      };
+      if (lane.state === "deliverable-ready") {
+        return registered;
+      }
+      yield* requireAllowedWorkLaneTransition({
+        commandType: command.type,
+        from: lane.state,
+        to: "deliverable-ready",
+      });
+      const stateChanged = yield* emitLaneStateChanged({
+        command,
+        laneId: command.laneId,
+        fromState: lane.state,
+        toState: "deliverable-ready",
+        occurredAt: command.registeredAt,
+      });
+      return [stateChanged, registered];
+    }
+
+    case "lane.completion.request": {
+      return yield* Effect.fail(
+        new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: "completion gate reserved until F2",
+        }),
+      );
+    }
+
+    case "lane.block": {
+      const lane = yield* requireLane({
+        readModel,
+        command,
+        laneId: command.laneId,
+      });
+      yield* requireAllowedWorkLaneTransition({
+        commandType: command.type,
+        from: lane.state,
+        to: "blocked",
+      });
+      return yield* emitLaneStateChanged({
+        command,
+        laneId: command.laneId,
+        fromState: lane.state,
+        toState: "blocked",
+        occurredAt: command.blockedAt,
+        resumeState: lane.state,
+        ...(command.reason !== undefined ? { reason: command.reason } : {}),
+        ...(command.blockerId !== undefined ? { blockerId: command.blockerId } : {}),
+      });
+    }
+
+    case "lane.unblock": {
+      const lane = yield* requireLane({
+        readModel,
+        command,
+        laneId: command.laneId,
+      });
+      if (lane.state !== "blocked") {
+        return yield* Effect.fail(
+          new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail: `Lane '${command.laneId}' is not blocked (current: '${lane.state}').`,
+          }),
+        );
+      }
+      const resumeState = lane.resumeState;
+      const toState: WorkLaneState =
+        resumeState !== null &&
+        !isWorkLaneTerminalState(resumeState) &&
+        resumeState !== "blocked"
+          ? resumeState
+          : "recovery-required";
+      return yield* emitLaneStateChanged({
+        command,
+        laneId: command.laneId,
+        fromState: lane.state,
+        toState,
+        occurredAt: command.unblockedAt,
+        resumeState: null,
+      });
+    }
+
+    case "lane.cancel": {
+      const lane = yield* requireLane({
+        readModel,
+        command,
+        laneId: command.laneId,
+      });
+      yield* requireAllowedWorkLaneTransition({
+        commandType: command.type,
+        from: lane.state,
+        to: "cancelled",
+      });
+      return yield* emitLaneStateChanged({
+        command,
+        laneId: command.laneId,
+        fromState: lane.state,
+        toState: "cancelled",
+        occurredAt: command.cancelledAt,
+        resumeState: null,
+      });
+    }
+
+    case "lane.supersede": {
+      const lane = yield* requireLane({
+        readModel,
+        command,
+        laneId: command.laneId,
+      });
+      if (!isAllowedWorkLaneSupersede(lane.state)) {
+        return yield* Effect.fail(
+          new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail: `Lane '${command.laneId}' cannot be superseded from terminal state '${lane.state}'.`,
+          }),
+        );
+      }
+      return yield* emitLaneStateChanged({
+        command,
+        laneId: command.laneId,
+        fromState: lane.state,
+        toState: "superseded",
+        occurredAt: command.supersededAt,
+        resumeState: null,
+        ...(command.supersedingLaneId !== undefined
+          ? { supersedingLaneId: command.supersedingLaneId }
+          : {}),
+      });
+    }
+
+    case "lane.recovery.request": {
+      const lane = yield* requireLane({
+        readModel,
+        command,
+        laneId: command.laneId,
+      });
+      if (lane.state !== "failed" && lane.state !== "recovery-required") {
+        return yield* Effect.fail(
+          new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail: `Lane '${command.laneId}' recovery is only allowed from 'failed' or 'recovery-required' (current: '${lane.state}').`,
+          }),
+        );
+      }
+      yield* requireAllowedWorkLaneTransition({
+        commandType: command.type,
+        from: lane.state,
+        to: "preflight",
+      });
+      return yield* emitLaneStateChanged({
+        command,
+        laneId: command.laneId,
+        fromState: lane.state,
+        toState: "preflight",
+        occurredAt: command.requestedAt,
+        resumeState: null,
+      });
+    }
+
+    case "lane.completion.invalidate": {
+      const lane = yield* requireLane({
+        readModel,
+        command,
+        laneId: command.laneId,
+      });
+      if (lane.state !== "completed") {
+        return yield* Effect.fail(
+          new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail: `Lane '${command.laneId}' completion invalidation requires 'completed' state (current: '${lane.state}').`,
+          }),
+        );
+      }
+      yield* requireAllowedWorkLaneTransition({
+        commandType: command.type,
+        from: lane.state,
+        to: "recovery-required",
+      });
+      yield* requireWorktreeExclusive({
+        readModel,
+        command,
+        worktreePath: lane.worktreePath,
+        exceptLaneId: command.laneId,
+      });
+      return yield* emitLaneStateChanged({
+        command,
+        laneId: command.laneId,
+        fromState: lane.state,
+        toState: "recovery-required",
+        occurredAt: command.invalidatedAt,
+        resumeState: null,
+        ...(command.reason !== undefined ? { reason: command.reason } : {}),
+      });
+    }
+
+    case "lane.fail": {
+      const lane = yield* requireLane({
+        readModel,
+        command,
+        laneId: command.laneId,
+      });
+      if (
+        lane.state !== "executing" &&
+        lane.state !== "testing" &&
+        lane.state !== "reviewing"
+      ) {
+        return yield* Effect.fail(
+          new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail: `Lane '${command.laneId}' can only fail from executing|testing|reviewing (current: '${lane.state}').`,
+          }),
+        );
+      }
+      yield* requireAllowedWorkLaneTransition({
+        commandType: command.type,
+        from: lane.state,
+        to: "failed",
+      });
+      return yield* emitLaneStateChanged({
+        command,
+        laneId: command.laneId,
+        fromState: lane.state,
+        toState: "failed",
+        occurredAt: command.failedAt,
+        resumeState: null,
+        ...(command.reason !== undefined ? { reason: command.reason } : {}),
+      });
+    }
+
+    case "lane.task-contract.update": {
+      const lane = yield* requireLane({
+        readModel,
+        command,
+        laneId: command.laneId,
+      });
+      yield* requireLaneMutable({ command, lane });
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "lane",
+          aggregateId: command.laneId,
+          occurredAt: command.updatedAt,
+          commandId: command.commandId,
+        })),
+        type: "lane.task-contract-updated" as const,
+        payload: {
+          laneId: command.laneId,
+          taskContract: command.taskContract,
+          updatedAt: command.updatedAt,
+        },
+      };
+    }
+
+    case "lane.meta.update": {
+      const lane = yield* requireLane({
+        readModel,
+        command,
+        laneId: command.laneId,
+      });
+      yield* requireLaneMutable({ command, lane });
+      if (
+        command.worktreePath !== undefined &&
+        isWorkLaneWorktreeOwningState(lane.state)
+      ) {
+        yield* requireWorktreeExclusive({
+          readModel,
+          command,
+          worktreePath: command.worktreePath,
+          exceptLaneId: command.laneId,
+        });
+      }
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "lane",
+          aggregateId: command.laneId,
+          occurredAt: command.updatedAt,
+          commandId: command.commandId,
+        })),
+        type: "lane.meta-updated" as const,
+        payload: {
+          laneId: command.laneId,
+          ...(command.title !== undefined ? { title: command.title } : {}),
+          ...(command.priority !== undefined ? { priority: command.priority } : {}),
+          ...(command.classification !== undefined
+            ? { classification: command.classification }
+            : {}),
+          ...(command.branch !== undefined ? { branch: command.branch } : {}),
+          ...(command.worktreePath !== undefined ? { worktreePath: command.worktreePath } : {}),
+          ...(command.baseRef !== undefined ? { baseRef: command.baseRef } : {}),
+          ...(command.repositoryIdentity !== undefined
+            ? { repositoryIdentity: command.repositoryIdentity }
+            : {}),
+          updatedAt: command.updatedAt,
+        },
+      };
+    }
+
+    case "source-truth.preflight.record": {
+      const lane = yield* requireLane({
+        readModel,
+        command,
+        laneId: command.laneId,
+      });
+      yield* requireLaneMutable({ command, lane });
+      if (command.revision.laneId !== command.laneId) {
+        return yield* Effect.fail(
+          new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail: `Source-truth revision laneId '${command.revision.laneId}' does not match command laneId '${command.laneId}'.`,
+          }),
+        );
+      }
+      if (command.revision.id === lane.sourceTruthRevisionId) {
+        return yield* Effect.fail(
+          new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail: `Source-truth revision '${command.revision.id}' is already current for lane '${command.laneId}'.`,
+          }),
+        );
+      }
+      const revisionAlreadyOwned = readModel.lanes.some(
+        (entry) => entry.sourceTruthRevisionId === command.revision.id,
+      );
+      if (revisionAlreadyOwned) {
+        return yield* Effect.fail(
+          new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail: `Source-truth revision '${command.revision.id}' already exists.`,
+          }),
+        );
+      }
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "lane",
+          aggregateId: command.laneId,
+          occurredAt: command.recordedAt,
+          commandId: command.commandId,
+        })),
+        type: "source-truth.preflight-recorded" as const,
+        payload: {
+          laneId: command.laneId,
+          revision: {
+            ...command.revision,
+            supersedesRevisionId: lane.sourceTruthRevisionId,
+          },
+          previousRevisionId: lane.sourceTruthRevisionId,
+          recordedAt: command.recordedAt,
+        },
+      };
+    }
+
+    case "source-truth.conflict.record": {
+      const conflictLane = yield* requireLane({
+        readModel,
+        command,
+        laneId: command.laneId,
+      });
+      yield* requireLaneMutable({ command, lane: conflictLane });
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "lane",
+          aggregateId: command.laneId,
+          occurredAt: command.recordedAt,
+          commandId: command.commandId,
+        })),
+        type: "source-truth.conflict-recorded" as const,
+        payload: {
+          laneId: command.laneId,
+          summary: command.summary,
+          recordedAt: command.recordedAt,
+        },
+      };
+    }
+
+    case "source-truth.refresh.request": {
+      const refreshLane = yield* requireLane({
+        readModel,
+        command,
+        laneId: command.laneId,
+      });
+      yield* requireLaneMutable({ command, lane: refreshLane });
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "lane",
+          aggregateId: command.laneId,
+          occurredAt: command.requestedAt,
+          commandId: command.commandId,
+        })),
+        type: "source-truth.refresh-requested" as const,
+        payload: {
+          laneId: command.laneId,
+          requestedAt: command.requestedAt,
+        },
+      };
     }
 
     default: {

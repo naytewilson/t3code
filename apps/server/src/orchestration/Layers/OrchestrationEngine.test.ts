@@ -160,6 +160,7 @@ describe("OrchestrationEngine", () => {
           session: null,
         },
       ],
+      lanes: [],
     };
     const commandReadModel = {
       ...projectionSnapshot,
@@ -187,6 +188,7 @@ describe("OrchestrationEngine", () => {
               snapshotSequence: projectionSnapshot.snapshotSequence,
               projects: [],
               threads: [],
+              lanes: [],
               updatedAt: projectionSnapshot.updatedAt,
             }),
           getArchivedShellSnapshot: () =>
@@ -194,6 +196,7 @@ describe("OrchestrationEngine", () => {
               snapshotSequence: projectionSnapshot.snapshotSequence,
               projects: [],
               threads: [],
+              lanes: [],
               updatedAt: projectionSnapshot.updatedAt,
             }),
           getSnapshotSequence: () =>
@@ -207,7 +210,8 @@ describe("OrchestrationEngine", () => {
           getThreadShellById: () => Effect.succeed(Option.none()),
           getThreadDetailById: () => Effect.succeed(Option.none()),
           getThreadDetailSnapshot: () => Effect.succeed(Option.none()),
-          searchThreads: () => Effect.succeed({ matches: [] }),
+          getLaneShellById: () => Effect.succeed(Option.none()),
+          getLaneDetail: () => Effect.succeed(Option.none()),
         }),
       ),
       Layer.provide(

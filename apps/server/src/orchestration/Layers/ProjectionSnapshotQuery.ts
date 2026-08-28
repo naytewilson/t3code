@@ -1,4 +1,5 @@
 import {
+  AcceptanceCriterion,
   ChatAttachment,
   CheckpointRef,
   IsoDateTime,
@@ -22,10 +23,21 @@ import {
   type OrchestrationSession,
   type OrchestrationThreadActivity,
   type OrchestrationThreadShell,
+  EnvironmentId,
   ModelSelection,
   ProjectId,
-  ThreadLinkedPullRequest,
+  SourceTruthRevision,
+  SourceTruthRevisionId,
   ThreadId,
+  TrimmedNonEmptyString,
+  WorkLane,
+  WorkLaneClassification,
+  WorkLaneDetailSnapshot,
+  WorkLaneId,
+  WorkLaneShell,
+  WorkLaneState,
+  WorkPriority,
+  type SourceTruthRevisionShellSummary,
 } from "@t3tools/contracts";
 import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
@@ -193,6 +205,88 @@ const ProjectionFullThreadDiffContextRowSchema = Schema.Struct({
   latestCheckpointTurnCount: Schema.NullOr(NonNegativeInt),
   toCheckpointRef: Schema.NullOr(CheckpointRef),
 });
+const ProjectionWorkLaneDbRowSchema = Schema.Struct({
+  id: WorkLaneId,
+  lane: Schema.fromJsonString(WorkLane),
+  updatedAt: IsoDateTime,
+});
+const ProjectionWorkLaneShellDbRowSchema = Schema.Struct({
+  id: WorkLaneId,
+  projectId: ProjectId,
+  title: TrimmedNonEmptyString,
+  state: WorkLaneState,
+  priority: WorkPriority,
+  classification: WorkLaneClassification,
+  environmentId: EnvironmentId,
+  branch: Schema.NullOr(TrimmedNonEmptyString),
+  worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  sourceTruthRevisionId: Schema.NullOr(SourceTruthRevisionId),
+  primaryThreadId: Schema.NullOr(ThreadId),
+  importedThreadId: Schema.NullOr(ThreadId),
+  objectiveSummary: TrimmedNonEmptyString,
+  createdAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+  completedAt: Schema.NullOr(IsoDateTime),
+  sourceTruthRevision: Schema.NullOr(Schema.fromJsonString(SourceTruthRevision)),
+});
+const ProjectionSourceTruthRevisionDbRowSchema = Schema.Struct({
+  id: Schema.String,
+  laneId: WorkLaneId,
+  revision: Schema.fromJsonString(SourceTruthRevision),
+  producedAt: IsoDateTime,
+  supersededAt: Schema.NullOr(IsoDateTime),
+});
+const ProjectionLaneAcceptanceCriterionDbRowSchema = Schema.Struct({
+  id: Schema.String,
+  laneId: WorkLaneId,
+  criterion: Schema.fromJsonString(AcceptanceCriterion),
+});
+const LaneIdLookupInput = Schema.Struct({
+  laneId: WorkLaneId,
+});
+const SourceTruthRevisionIdLookupInput = Schema.Struct({
+  revisionId: SourceTruthRevisionId,
+});
+
+function toSourceTruthShellSummary(
+  revision: SourceTruthRevision,
+): SourceTruthRevisionShellSummary {
+  return {
+    revisionId: revision.id,
+    branch: revision.branch,
+    headSha: revision.headSha,
+    worktreePath: revision.worktreePath,
+    isDirty: revision.dirty.isDirty,
+    activeGitOperation: revision.activeGitOperation,
+    ownershipOverlap: revision.ownershipOverlap,
+    producedAt: revision.producedAt,
+  };
+}
+
+function shellRowToWorkLaneShell(
+  row: Schema.Schema.Type<typeof ProjectionWorkLaneShellDbRowSchema>,
+): WorkLaneShell {
+  return {
+    id: row.id,
+    projectId: row.projectId,
+    title: row.title,
+    state: row.state,
+    priority: row.priority,
+    classification: row.classification,
+    environmentId: row.environmentId,
+    branch: row.branch,
+    worktreePath: row.worktreePath,
+    sourceTruthRevisionId: row.sourceTruthRevisionId,
+    sourceTruthSummary:
+      row.sourceTruthRevision === null ? null : toSourceTruthShellSummary(row.sourceTruthRevision),
+    primaryThreadId: row.primaryThreadId,
+    importedThreadId: row.importedThreadId,
+    objectiveSummary: row.objectiveSummary,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+    completedAt: row.completedAt,
+  };
+}
 
 const REQUIRED_SNAPSHOT_PROJECTORS = [
   ORCHESTRATION_PROJECTOR_NAMES.projects,
@@ -202,6 +296,7 @@ const REQUIRED_SNAPSHOT_PROJECTORS = [
   ORCHESTRATION_PROJECTOR_NAMES.threadActivities,
   ORCHESTRATION_PROJECTOR_NAMES.threadSessions,
   ORCHESTRATION_PROJECTOR_NAMES.checkpoints,
+  ORCHESTRATION_PROJECTOR_NAMES.workLanes,
 ] as const;
 
 function maxIso(left: string | null, right: string): string {
@@ -1451,6 +1546,141 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       `,
   });
 
+  const listWorkLaneRows = SqlSchema.findAll({
+    Request: Schema.Void,
+    Result: ProjectionWorkLaneDbRowSchema,
+    execute: () =>
+      sql`
+        SELECT
+          id,
+          lane_json AS "lane",
+          updated_at AS "updatedAt"
+        FROM projection_work_lanes
+        ORDER BY created_at ASC, id ASC
+      `,
+  });
+
+  const listWorkLaneShellRows = SqlSchema.findAll({
+    Request: Schema.Void,
+    Result: ProjectionWorkLaneShellDbRowSchema,
+    execute: () =>
+      sql`
+        SELECT
+          wl.id,
+          wl.project_id AS "projectId",
+          wl.title,
+          wl.state,
+          wl.priority,
+          wl.classification,
+          wl.environment_id AS "environmentId",
+          wl.branch,
+          wl.worktree_path AS "worktreePath",
+          wl.source_truth_revision_id AS "sourceTruthRevisionId",
+          wl.primary_thread_id AS "primaryThreadId",
+          wl.imported_thread_id AS "importedThreadId",
+          wl.objective_summary AS "objectiveSummary",
+          wl.created_at AS "createdAt",
+          wl.updated_at AS "updatedAt",
+          wl.completed_at AS "completedAt",
+          str.revision_json AS "sourceTruthRevision"
+        FROM projection_work_lanes wl
+        LEFT JOIN projection_source_truth_revisions str
+          ON str.id = wl.source_truth_revision_id
+         AND str.superseded_at IS NULL
+        ORDER BY wl.created_at ASC, wl.id ASC
+      `,
+  });
+
+  const getWorkLaneRow = SqlSchema.findOneOption({
+    Request: LaneIdLookupInput,
+    Result: ProjectionWorkLaneDbRowSchema,
+    execute: ({ laneId }) =>
+      sql`
+        SELECT
+          id,
+          lane_json AS "lane",
+          updated_at AS "updatedAt"
+        FROM projection_work_lanes
+        WHERE id = ${laneId}
+      `,
+  });
+
+  const getWorkLaneShellRow = SqlSchema.findOneOption({
+    Request: LaneIdLookupInput,
+    Result: ProjectionWorkLaneShellDbRowSchema,
+    execute: ({ laneId }) =>
+      sql`
+        SELECT
+          wl.id,
+          wl.project_id AS "projectId",
+          wl.title,
+          wl.state,
+          wl.priority,
+          wl.classification,
+          wl.environment_id AS "environmentId",
+          wl.branch,
+          wl.worktree_path AS "worktreePath",
+          wl.source_truth_revision_id AS "sourceTruthRevisionId",
+          wl.primary_thread_id AS "primaryThreadId",
+          wl.imported_thread_id AS "importedThreadId",
+          wl.objective_summary AS "objectiveSummary",
+          wl.created_at AS "createdAt",
+          wl.updated_at AS "updatedAt",
+          wl.completed_at AS "completedAt",
+          NULL AS "sourceTruthRevision"
+        FROM projection_work_lanes wl
+        WHERE wl.id = ${laneId}
+      `,
+  });
+
+  const getSourceTruthRevisionRowById = SqlSchema.findOneOption({
+    Request: SourceTruthRevisionIdLookupInput,
+    Result: ProjectionSourceTruthRevisionDbRowSchema,
+    execute: ({ revisionId }) =>
+      sql`
+        SELECT
+          id,
+          lane_id AS "laneId",
+          revision_json AS "revision",
+          produced_at AS "producedAt",
+          superseded_at AS "supersededAt"
+        FROM projection_source_truth_revisions
+        WHERE id = ${revisionId}
+      `,
+  });
+
+  const listSourceTruthRevisionRowsByLane = SqlSchema.findAll({
+    Request: LaneIdLookupInput,
+    Result: ProjectionSourceTruthRevisionDbRowSchema,
+    execute: ({ laneId }) =>
+      sql`
+        SELECT
+          id,
+          lane_id AS "laneId",
+          revision_json AS "revision",
+          produced_at AS "producedAt",
+          superseded_at AS "supersededAt"
+        FROM projection_source_truth_revisions
+        WHERE lane_id = ${laneId}
+        ORDER BY produced_at ASC, id ASC
+      `,
+  });
+
+  const listAcceptanceCriterionRowsByLane = SqlSchema.findAll({
+    Request: LaneIdLookupInput,
+    Result: ProjectionLaneAcceptanceCriterionDbRowSchema,
+    execute: ({ laneId }) =>
+      sql`
+        SELECT
+          id,
+          lane_id AS "laneId",
+          criterion_json AS "criterion"
+        FROM projection_lane_acceptance_criteria
+        WHERE lane_id = ${laneId}
+        ORDER BY id ASC
+      `,
+  });
+
   const getSnapshot: ProjectionSnapshotQueryShape["getSnapshot"] = () =>
     sql
       .withTransaction(
@@ -1519,6 +1749,14 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
               ),
             ),
           ),
+          listWorkLaneRows(undefined).pipe(
+            Effect.mapError(
+              toPersistenceSqlOrDecodeError(
+                "ProjectionSnapshotQuery.getSnapshot:listWorkLanes:query",
+                "ProjectionSnapshotQuery.getSnapshot:listWorkLanes:decodeRows",
+              ),
+            ),
+          ),
           listProjectionStateRows(undefined).pipe(
             Effect.mapError(
               toPersistenceSqlOrDecodeError(
@@ -1540,6 +1778,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             sessionRows,
             checkpointRows,
             latestTurnRows,
+            workLaneRows,
             stateRows,
           ]) =>
             Effect.gen(function* () {
@@ -1727,10 +1966,15 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                 session: sessionsByThread.get(row.threadId) ?? null,
               }));
 
+              for (const row of workLaneRows) {
+                updatedAt = maxIso(updatedAt, row.updatedAt);
+              }
+
               const snapshot = {
                 snapshotSequence: computeSnapshotSequence(stateRows),
                 projects,
                 threads,
+                lanes: workLaneRows.map((row) => row.lane),
                 updatedAt: updatedAt ?? "1970-01-01T00:00:00.000Z",
               };
 
@@ -1793,6 +2037,14 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
               ),
             ),
           ),
+          listWorkLaneRows(undefined).pipe(
+            Effect.mapError(
+              toPersistenceSqlOrDecodeError(
+                "ProjectionSnapshotQuery.getCommandReadModel:listWorkLanes:query",
+                "ProjectionSnapshotQuery.getCommandReadModel:listWorkLanes:decodeRows",
+              ),
+            ),
+          ),
           listProjectionStateRows(undefined).pipe(
             Effect.mapError(
               toPersistenceSqlOrDecodeError(
@@ -1805,7 +2057,15 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       )
       .pipe(
         Effect.flatMap(
-          ([projectRows, threadRows, proposedPlanRows, sessionRows, latestTurnRows, stateRows]) =>
+          ([
+            projectRows,
+            threadRows,
+            proposedPlanRows,
+            sessionRows,
+            latestTurnRows,
+            workLaneRows,
+            stateRows,
+          ]) =>
             Effect.sync(() => {
               let updatedAt: string | null = null;
               const projects: OrchestrationProject[] = [];
@@ -1939,10 +2199,15 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                 });
               }
 
+              for (const row of workLaneRows) {
+                updatedAt = maxIso(updatedAt, row.updatedAt);
+              }
+
               return {
                 snapshotSequence: computeSnapshotSequence(stateRows),
                 projects,
                 threads,
+                lanes: workLaneRows.map((row) => row.lane),
                 updatedAt: updatedAt ?? "1970-01-01T00:00:00.000Z",
               } satisfies OrchestrationReadModel;
             }),
@@ -1991,6 +2256,14 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
               ),
             ),
           ),
+          listWorkLaneShellRows(undefined).pipe(
+            Effect.mapError(
+              toPersistenceSqlOrDecodeError(
+                "ProjectionSnapshotQuery.getShellSnapshot:listWorkLanes:query",
+                "ProjectionSnapshotQuery.getShellSnapshot:listWorkLanes:decodeRows",
+              ),
+            ),
+          ),
           listProjectionStateRows(undefined).pipe(
             Effect.mapError(
               toPersistenceSqlOrDecodeError(
@@ -2002,7 +2275,15 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         ]),
       )
       .pipe(
-        Effect.flatMap(([projectRows, threadRows, sessionRows, latestTurnRows, stateRows]) =>
+        Effect.flatMap(
+          ([
+            projectRows,
+            threadRows,
+            sessionRows,
+            latestTurnRows,
+            workLaneRows,
+            stateRows,
+          ]) =>
           Effect.gen(function* () {
             let updatedAt: string | null = null;
             for (const row of projectRows) {
@@ -2022,6 +2303,9 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
               if (row.completedAt !== null) {
                 updatedAt = maxIso(updatedAt, row.completedAt);
               }
+            }
+            for (const row of workLaneRows) {
+              updatedAt = maxIso(updatedAt, row.updatedAt);
             }
             for (const row of stateRows) {
               updatedAt = maxIso(updatedAt, row.updatedAt);
@@ -2082,6 +2366,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                     } satisfies OrchestrationThreadShell)
                   : Result.failVoid,
               ),
+              lanes: workLaneRows.map(shellRowToWorkLaneShell),
               updatedAt: updatedAt ?? "1970-01-01T00:00:00.000Z",
             };
 
@@ -2230,6 +2515,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                   planProgress: threadPlanProgress.getThreadPlanProgress(row.threadId),
                 }),
               ),
+              lanes: [],
               updatedAt: updatedAt ?? "1970-01-01T00:00:00.000Z",
             };
 
@@ -2845,6 +3131,91 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         ),
       );
 
+  const getLaneShellById: ProjectionSnapshotQueryShape["getLaneShellById"] = (laneId) =>
+    getWorkLaneShellRow({ laneId }).pipe(
+      Effect.flatMap((row) =>
+        Effect.gen(function* () {
+          if (Option.isNone(row)) {
+            return Option.none<WorkLaneShell>();
+          }
+          const shellRow = row.value;
+          if (shellRow.sourceTruthRevisionId === null) {
+            return Option.some(shellRowToWorkLaneShell(shellRow));
+          }
+          const revisionRow = yield* getSourceTruthRevisionRowById({
+            revisionId: shellRow.sourceTruthRevisionId,
+          });
+          return Option.some(
+            shellRowToWorkLaneShell({
+              ...shellRow,
+              sourceTruthRevision: Option.match(revisionRow, {
+                onNone: () => null,
+                onSome: (value) => value.revision,
+              }),
+            }),
+          );
+        }),
+      ),
+      Effect.mapError(
+        toPersistenceSqlOrDecodeError(
+          "ProjectionSnapshotQuery.getLaneShellById:query",
+          "ProjectionSnapshotQuery.getLaneShellById:decodeRows",
+        ),
+      ),
+    );
+
+  const getLaneDetail: ProjectionSnapshotQueryShape["getLaneDetail"] = (laneId) =>
+    sql
+      .withTransaction(
+        Effect.gen(function* () {
+          const laneRow = yield* getWorkLaneRow({ laneId }).pipe(
+            Effect.mapError(
+              toPersistenceSqlOrDecodeError(
+                "ProjectionSnapshotQuery.getLaneDetail:getLane:query",
+                "ProjectionSnapshotQuery.getLaneDetail:getLane:decodeRow",
+              ),
+            ),
+          );
+          if (Option.isNone(laneRow)) {
+            return Option.none<WorkLaneDetailSnapshot>();
+          }
+          const [criterionRows, revisionRows, { snapshotSequence }] = yield* Effect.all([
+            listAcceptanceCriterionRowsByLane({ laneId }).pipe(
+              Effect.mapError(
+                toPersistenceSqlOrDecodeError(
+                  "ProjectionSnapshotQuery.getLaneDetail:listCriteria:query",
+                  "ProjectionSnapshotQuery.getLaneDetail:listCriteria:decodeRows",
+                ),
+              ),
+            ),
+            listSourceTruthRevisionRowsByLane({ laneId }).pipe(
+              Effect.mapError(
+                toPersistenceSqlOrDecodeError(
+                  "ProjectionSnapshotQuery.getLaneDetail:listRevisions:query",
+                  "ProjectionSnapshotQuery.getLaneDetail:listRevisions:decodeRows",
+                ),
+              ),
+            ),
+            getSnapshotSequence(),
+          ]);
+          return Option.some({
+            snapshotSequence,
+            detail: {
+              lane: laneRow.value.lane,
+              acceptanceCriteria: criterionRows.map((row) => row.criterion),
+              sourceTruthRevisions: revisionRows.map((row) => row.revision),
+            },
+          } satisfies WorkLaneDetailSnapshot);
+        }),
+      )
+      .pipe(
+        Effect.mapError((error) =>
+          isPersistenceError(error)
+            ? error
+            : toPersistenceSqlError("ProjectionSnapshotQuery.getLaneDetail:transaction")(error),
+        ),
+      );
+
   return {
     getCommandReadModel,
     getSnapshot,
@@ -2861,6 +3232,8 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
     getThreadShellById,
     getThreadDetailById,
     getThreadDetailSnapshot,
+    getLaneShellById,
+    getLaneDetail,
   } satisfies ProjectionSnapshotQueryShape;
 });
 

@@ -94,3 +94,26 @@ export const ApprovalRequestId = makeEntityId("ApprovalRequestId");
 export type ApprovalRequestId = typeof ApprovalRequestId.Type;
 export const CheckpointRef = makeEntityId("CheckpointRef");
 export type CheckpointRef = typeof CheckpointRef.Type;
+
+/** Durable MacBrains work-lane identity (distinct from ThreadId). */
+export const WorkLaneId = makeEntityId("WorkLaneId");
+export type WorkLaneId = typeof WorkLaneId.Type;
+export const SourceTruthRevisionId = makeEntityId("SourceTruthRevisionId");
+export type SourceTruthRevisionId = typeof SourceTruthRevisionId.Type;
+export const AcceptanceCriterionId = makeEntityId("AcceptanceCriterionId");
+export type AcceptanceCriterionId = typeof AcceptanceCriterionId.Type;
+export const PlanRevisionId = makeEntityId("PlanRevisionId");
+export type PlanRevisionId = typeof PlanRevisionId.Type;
+export const BlockerId = makeEntityId("BlockerId");
+export type BlockerId = typeof BlockerId.Type;
+export const ArtifactRefId = makeEntityId("ArtifactRefId");
+export type ArtifactRefId = typeof ArtifactRefId.Type;
+/** Reserved for F3 agent topology — do not populate as a full aggregate in F0. */
+export const AgentAssignmentId = makeEntityId("AgentAssignmentId");
+export type AgentAssignmentId = typeof AgentAssignmentId.Type;
+/** Reserved for deliverable aggregate (later packages). */
+export const DeliverableId = makeEntityId("DeliverableId");
+export type DeliverableId = typeof DeliverableId.Type;
+/** Reserved for typed receipt store (F1). */
+export const ReceiptId = makeEntityId("ReceiptId");
+export type ReceiptId = typeof ReceiptId.Type;

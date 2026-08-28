@@ -246,6 +246,7 @@ const makeDefaultOrchestrationReadModel = () => {
         deletedAt: null,
       },
     ],
+    lanes: [],
   };
 };
 
@@ -803,6 +804,7 @@ const buildAppUnderTest = (options?: {
               snapshotSequence: 0,
               projects: [],
               threads: [],
+              lanes: [],
               updatedAt: "1970-01-01T00:00:00.000Z",
             }),
           getArchivedShellSnapshot: () =>
@@ -810,6 +812,7 @@ const buildAppUnderTest = (options?: {
               snapshotSequence: 0,
               projects: [],
               threads: [],
+              lanes: [],
               updatedAt: "1970-01-01T00:00:00.000Z",
             }),
           searchThreads: () => Effect.succeed({ matches: [] }),
@@ -818,6 +821,8 @@ const buildAppUnderTest = (options?: {
           getThreadShellById: () => Effect.succeed(Option.none()),
           getThreadDetailById: () => Effect.succeed(Option.none()),
           getThreadDetailSnapshot: () => Effect.succeed(Option.none()),
+          getLaneShellById: () => Effect.succeed(Option.none()),
+          getLaneDetail: () => Effect.succeed(Option.none()),
           getCounts: () => Effect.succeed({ projectCount: 0, threadCount: 0 }),
           getActiveProjectByWorkspaceRoot: () => Effect.succeed(Option.none()),
           getFirstActiveThreadIdByProjectId: () => Effect.succeed(Option.none()),
@@ -6134,6 +6139,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             deletedAt: null,
           },
         ],
+        lanes: [],
       };
 
       yield* buildAppUnderTest({
@@ -6341,6 +6347,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                   snapshotSequence: 1,
                   projects: [],
                   threads: [makeDefaultOrchestrationThreadShell()],
+                  lanes: [],
                   updatedAt: "2026-01-01T00:00:00.000Z",
                 };
               }),
@@ -6599,6 +6606,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                 snapshotSequence: 100_000,
                 projects: [],
                 threads: [makeDefaultOrchestrationThreadShell({ id: snapshotThreadId })],
+                lanes: [],
                 updatedAt: now,
               }),
           },
@@ -6646,6 +6654,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                 snapshotSequence: 5,
                 projects: [],
                 threads: [],
+                lanes: [],
                 updatedAt: "2026-01-01T00:00:00.000Z",
               }),
           },

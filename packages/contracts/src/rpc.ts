@@ -968,6 +968,19 @@ export const WsOrchestrationSubscribeThreadRpc = Rpc.make(
   },
 );
 
+export const WsOrchestrationSubscribeLaneRpc = Rpc.make(ORCHESTRATION_WS_METHODS.subscribeLane, {
+  payload: OrchestrationRpcSchemas.subscribeLane.input,
+  success: OrchestrationRpcSchemas.subscribeLane.output,
+  error: Schema.Union([OrchestrationGetSnapshotError, EnvironmentAuthorizationError]),
+  stream: true,
+});
+
+export const WsOrchestrationGetLaneDetailRpc = Rpc.make(ORCHESTRATION_WS_METHODS.getLaneDetail, {
+  payload: OrchestrationRpcSchemas.getLaneDetail.input,
+  success: OrchestrationRpcSchemas.getLaneDetail.output,
+  error: Schema.Union([OrchestrationGetSnapshotError, EnvironmentAuthorizationError]),
+});
+
 export const WsSubscribeTerminalEventsRpc = Rpc.make(WS_METHODS.subscribeTerminalEvents, {
   payload: Schema.Struct({}),
   success: TerminalEvent,
@@ -1120,4 +1133,6 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationGetArchivedShellSnapshotRpc,
   WsOrchestrationSubscribeShellRpc,
   WsOrchestrationSubscribeThreadRpc,
+  WsOrchestrationSubscribeLaneRpc,
+  WsOrchestrationGetLaneDetailRpc,
 );

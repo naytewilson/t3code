@@ -34,6 +34,9 @@ import {
   ProjectionTurnRepository,
 } from "../../persistence/Services/ProjectionTurns.ts";
 import { ProjectionThreadRepository } from "../../persistence/Services/ProjectionThreads.ts";
+import { ProjectionWorkLaneRepository } from "../../persistence/Services/ProjectionWorkLanes.ts";
+import { ProjectionSourceTruthRevisionRepository } from "../../persistence/Services/ProjectionSourceTruthRevisions.ts";
+import { ProjectionLaneAcceptanceCriterionRepository } from "../../persistence/Services/ProjectionLaneAcceptanceCriteria.ts";
 import { ProjectionPendingApprovalRepositoryLive } from "../../persistence/Layers/ProjectionPendingApprovals.ts";
 import { ProjectionProjectRepositoryLive } from "../../persistence/Layers/ProjectionProjects.ts";
 import { ProjectionStateRepositoryLive } from "../../persistence/Layers/ProjectionState.ts";
@@ -43,6 +46,9 @@ import { ProjectionThreadProposedPlanRepositoryLive } from "../../persistence/La
 import { ProjectionThreadSessionRepositoryLive } from "../../persistence/Layers/ProjectionThreadSessions.ts";
 import { ProjectionTurnRepositoryLive } from "../../persistence/Layers/ProjectionTurns.ts";
 import { ProjectionThreadRepositoryLive } from "../../persistence/Layers/ProjectionThreads.ts";
+import { ProjectionWorkLaneRepositoryLive } from "../../persistence/Layers/ProjectionWorkLanes.ts";
+import { ProjectionSourceTruthRevisionRepositoryLive } from "../../persistence/Layers/ProjectionSourceTruthRevisions.ts";
+import { ProjectionLaneAcceptanceCriterionRepositoryLive } from "../../persistence/Layers/ProjectionLaneAcceptanceCriteria.ts";
 import { ServerConfig } from "../../config.ts";
 import {
   OrchestrationProjectionPipeline,
@@ -54,6 +60,7 @@ import {
   parseThreadSegmentFromAttachmentId,
   toSafeThreadAttachmentSegment,
 } from "../../attachmentStore.ts";
+import type { WorkLane } from "@t3tools/contracts";
 
 export const ORCHESTRATION_PROJECTOR_NAMES = {
   projects: "projection.projects",
@@ -65,7 +72,31 @@ export const ORCHESTRATION_PROJECTOR_NAMES = {
   threadTurns: "projection.thread-turns",
   checkpoints: "projection.checkpoints",
   pendingApprovals: "projection.pending-approvals",
+  workLanes: "projection.work-lanes",
 } as const;
+
+function toProjectionWorkLaneRow(lane: WorkLane, lastSequence: number) {
+  return {
+    id: lane.id,
+    projectId: lane.projectId,
+    title: lane.title,
+    state: lane.state,
+    priority: lane.priority,
+    classification: lane.classification,
+    environmentId: lane.environmentId,
+    branch: lane.branch,
+    worktreePath: lane.worktreePath,
+    sourceTruthRevisionId: lane.sourceTruthRevisionId,
+    primaryThreadId: lane.primaryThreadId,
+    importedThreadId: lane.importedThreadId,
+    objectiveSummary: lane.taskContract.objective,
+    lane,
+    createdAt: lane.createdAt,
+    updatedAt: lane.updatedAt,
+    completedAt: lane.completedAt,
+    lastSequence,
+  };
+}
 
 type ProjectorName =
   (typeof ORCHESTRATION_PROJECTOR_NAMES)[keyof typeof ORCHESTRATION_PROJECTOR_NAMES];
@@ -503,6 +534,10 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
     const projectionThreadSessionRepository = yield* ProjectionThreadSessionRepository;
     const projectionTurnRepository = yield* ProjectionTurnRepository;
     const projectionPendingApprovalRepository = yield* ProjectionPendingApprovalRepository;
+    const projectionWorkLaneRepository = yield* ProjectionWorkLaneRepository;
+    const projectionSourceTruthRevisionRepository = yield* ProjectionSourceTruthRevisionRepository;
+    const projectionLaneAcceptanceCriterionRepository =
+      yield* ProjectionLaneAcceptanceCriterionRepository;
 
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -1645,6 +1680,179 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
       }
     });
 
+    const applyWorkLanesProjection: ProjectorDefinition["apply"] = Effect.fn(
+      "applyWorkLanesProjection",
+    )(function* (event, _attachmentSideEffects) {
+      switch (event.type) {
+        case "lane.created":
+        case "lane.imported": {
+          yield* projectionWorkLaneRepository.upsert(
+            toProjectionWorkLaneRow(event.payload.lane, event.sequence),
+          );
+          for (const criterion of event.payload.acceptanceCriteria) {
+            yield* projectionLaneAcceptanceCriterionRepository.upsert({
+              id: criterion.id,
+              laneId: criterion.laneId,
+              criterion,
+              lastSequence: event.sequence,
+            });
+          }
+          return;
+        }
+
+        case "lane.state-changed":
+        case "lane.task-contract-updated":
+        case "lane.meta-updated":
+        case "lane.plan-proposed":
+        case "lane.plan-activated":
+        case "lane.deliverable-registered": {
+          const existing = yield* projectionWorkLaneRepository.getById({
+            id: event.payload.laneId,
+          });
+          if (Option.isNone(existing)) {
+            return;
+          }
+          const lane = existing.value.lane;
+          let next = lane;
+          switch (event.type) {
+            case "lane.state-changed": {
+              const blockerIds =
+                event.payload.blockerId === undefined
+                  ? lane.blockerIds
+                  : lane.blockerIds.includes(event.payload.blockerId)
+                    ? lane.blockerIds
+                    : [...lane.blockerIds, event.payload.blockerId];
+              next = {
+                ...lane,
+                state: event.payload.toState,
+                resumeState: event.payload.resumeState,
+                blockerIds,
+                ...(event.payload.supersedingLaneId !== undefined
+                  ? { supersedingLaneId: event.payload.supersedingLaneId }
+                  : {}),
+                updatedAt: event.payload.updatedAt,
+                completedAt:
+                  event.payload.toState === "completed"
+                    ? event.payload.updatedAt
+                    : event.payload.fromState === "completed"
+                      ? null
+                      : lane.completedAt,
+              };
+              break;
+            }
+            case "lane.task-contract-updated":
+              next = {
+                ...lane,
+                taskContract: event.payload.taskContract,
+                updatedAt: event.payload.updatedAt,
+              };
+              break;
+            case "lane.meta-updated":
+              next = {
+                ...lane,
+                ...(event.payload.title !== undefined ? { title: event.payload.title } : {}),
+                ...(event.payload.priority !== undefined
+                  ? { priority: event.payload.priority }
+                  : {}),
+                ...(event.payload.classification !== undefined
+                  ? { classification: event.payload.classification }
+                  : {}),
+                ...(event.payload.branch !== undefined ? { branch: event.payload.branch } : {}),
+                ...(event.payload.worktreePath !== undefined
+                  ? { worktreePath: event.payload.worktreePath }
+                  : {}),
+                ...(event.payload.baseRef !== undefined ? { baseRef: event.payload.baseRef } : {}),
+                ...(event.payload.repositoryIdentity !== undefined
+                  ? { repositoryIdentity: event.payload.repositoryIdentity }
+                  : {}),
+                updatedAt: event.payload.updatedAt,
+              };
+              break;
+            case "lane.plan-proposed":
+              next = {
+                ...lane,
+                updatedAt: event.payload.proposedAt,
+              };
+              break;
+            case "lane.plan-activated":
+              next = {
+                ...lane,
+                activePlanRevisionId: event.payload.planRevisionId,
+                updatedAt: event.payload.updatedAt,
+              };
+              break;
+            case "lane.deliverable-registered":
+              next = {
+                ...lane,
+                deliverableIds: lane.deliverableIds.includes(event.payload.deliverableId)
+                  ? lane.deliverableIds
+                  : [...lane.deliverableIds, event.payload.deliverableId],
+                updatedAt: event.payload.updatedAt,
+              };
+              break;
+          }
+          yield* projectionWorkLaneRepository.upsert(
+            toProjectionWorkLaneRow(next, event.sequence),
+          );
+          return;
+        }
+
+        case "source-truth.preflight-recorded": {
+          const existing = yield* projectionWorkLaneRepository.getById({
+            id: event.payload.laneId,
+          });
+          if (Option.isSome(existing) && event.payload.previousRevisionId !== null) {
+            const previous = yield* projectionSourceTruthRevisionRepository.getById({
+              id: event.payload.previousRevisionId,
+            });
+            if (Option.isSome(previous)) {
+              yield* projectionSourceTruthRevisionRepository.upsert({
+                ...previous.value,
+                supersededAt: event.payload.recordedAt,
+                revision: {
+                  ...previous.value.revision,
+                  supersededAt: event.payload.recordedAt,
+                },
+                lastSequence: event.sequence,
+              });
+            }
+          }
+
+          yield* projectionSourceTruthRevisionRepository.upsert({
+            id: event.payload.revision.id,
+            laneId: event.payload.laneId,
+            revision: event.payload.revision,
+            producedAt: event.payload.revision.producedAt,
+            supersededAt: event.payload.revision.supersededAt,
+            lastSequence: event.sequence,
+          });
+
+          if (Option.isSome(existing)) {
+            yield* projectionWorkLaneRepository.upsert(
+              toProjectionWorkLaneRow(
+                {
+                  ...existing.value.lane,
+                  sourceTruthRevisionId: event.payload.revision.id,
+                  sourceTruthActiveGitOperation: event.payload.revision.activeGitOperation,
+                  sourceTruthOwnershipOverlap: event.payload.revision.ownershipOverlap,
+                  updatedAt: event.payload.recordedAt,
+                },
+                event.sequence,
+              ),
+            );
+          }
+          return;
+        }
+
+        case "source-truth.conflict-recorded":
+        case "source-truth.refresh-requested":
+          return;
+
+        default:
+          return;
+      }
+    });
+
     const projectors: ReadonlyArray<ProjectorDefinition> = [
       {
         name: ORCHESTRATION_PROJECTOR_NAMES.projects,
@@ -1681,6 +1889,10 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
       {
         name: ORCHESTRATION_PROJECTOR_NAMES.threads,
         apply: applyThreadsProjection,
+      },
+      {
+        name: ORCHESTRATION_PROJECTOR_NAMES.workLanes,
+        apply: applyWorkLanesProjection,
       },
     ];
 
@@ -1784,5 +1996,8 @@ export const OrchestrationProjectionPipelineLive = Layer.effect(
   Layer.provideMerge(ProjectionThreadSessionRepositoryLive),
   Layer.provideMerge(ProjectionTurnRepositoryLive),
   Layer.provideMerge(ProjectionPendingApprovalRepositoryLive),
+  Layer.provideMerge(ProjectionWorkLaneRepositoryLive),
+  Layer.provideMerge(ProjectionSourceTruthRevisionRepositoryLive),
+  Layer.provideMerge(ProjectionLaneAcceptanceCriterionRepositoryLive),
   Layer.provideMerge(ProjectionStateRepositoryLive),
 );

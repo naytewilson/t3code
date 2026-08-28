@@ -1,0 +1,332 @@
+{
+  "$schemaVersion": 1,
+  "templates": [
+    {
+      "id": "implement-feature",
+      "title": "Implement feature",
+      "classification": "substantial",
+      "lifecycle": [
+        "preflight",
+        "orientation",
+        "plan",
+        "advisor-when-risk-triggered",
+        "implementation",
+        "focused-checks",
+        "independent-review",
+        "ui-acceptance-when-applicable",
+        "deliverable",
+        "completion"
+      ],
+      "topology": ["executor", "advisor", "verifier"],
+      "worktreeRequired": true,
+      "requiredReceipts": [
+        "source-truth-preflight",
+        "orientation",
+        "plan",
+        "diff",
+        "checks",
+        "review",
+        "deliverable",
+        "completion"
+      ]
+    },
+    {
+      "id": "fix-bug",
+      "title": "Fix bug",
+      "classification": "substantial",
+      "lifecycle": [
+        "preflight",
+        "reproduction",
+        "root-cause",
+        "plan",
+        "implementation",
+        "regression-test",
+        "affected-checks",
+        "independent-review",
+        "visible-acceptance-when-applicable",
+        "completion"
+      ],
+      "topology": ["executor", "verifier"],
+      "advisorTriggers": [
+        "architecture",
+        "persistence",
+        "concurrency",
+        "security",
+        "performance-hot-path",
+        "failed-first-fix"
+      ],
+      "worktreeRequired": true,
+      "requiredReceipts": [
+        "source-truth-preflight",
+        "reproduction",
+        "plan",
+        "diff",
+        "regression-check",
+        "review",
+        "completion"
+      ]
+    },
+    {
+      "id": "review-pull-request",
+      "title": "Review pull request",
+      "classification": "readonly-or-bounded",
+      "lifecycle": [
+        "preflight",
+        "fetch-current-pr",
+        "inspect-diff-and-source",
+        "run-focused-checks",
+        "classify-findings",
+        "verify-findings",
+        "submit-authorized-review",
+        "completion"
+      ],
+      "topology": ["verifier"],
+      "worktreeRequired": "when-running-or-editing",
+      "requiredReceipts": [
+        "source-truth-preflight",
+        "pr-state",
+        "review",
+        "checks",
+        "completion"
+      ]
+    },
+    {
+      "id": "repository-audit",
+      "title": "Repository audit",
+      "classification": "readonly",
+      "lifecycle": [
+        "preflight",
+        "instruction-and-architecture-read",
+        "source-and-test-inspection",
+        "risk-classification",
+        "evidence-report",
+        "completion"
+      ],
+      "topology": ["executor", "verifier"],
+      "worktreeRequired": false,
+      "requiredReceipts": [
+        "source-truth-preflight",
+        "orientation",
+        "review",
+        "completion"
+      ]
+    },
+    {
+      "id": "research-and-design",
+      "title": "Research and design",
+      "classification": "substantial-readonly",
+      "lifecycle": [
+        "source-collection",
+        "exploration",
+        "candidate-designs",
+        "canonical-verification",
+        "architecture-decision",
+        "implementation-contract",
+        "completion"
+      ],
+      "topology": ["explorer", "advisor", "verifier"],
+      "worktreeRequired": "when-writing-canonical-design",
+      "requiredReceipts": [
+        "source-truth-preflight",
+        "research-source-ledger",
+        "advisor",
+        "review",
+        "decision",
+        "completion"
+      ]
+    },
+    {
+      "id": "experiment-benchmark",
+      "title": "Experiment or benchmark",
+      "classification": "substantial",
+      "lifecycle": [
+        "preflight",
+        "hypothesis-and-falsification",
+        "harness-orientation",
+        "measurement-plan",
+        "correctness-gate",
+        "execution",
+        "raw-artifact-capture",
+        "independent-recomputation",
+        "verdict",
+        "ledger-update",
+        "completion"
+      ],
+      "topology": ["executor", "advisor", "verifier"],
+      "worktreeRequired": true,
+      "requiredReceipts": [
+        "source-truth-preflight",
+        "experiment-contract",
+        "environment",
+        "commands",
+        "correctness-check",
+        "raw-artifacts",
+        "statistics",
+        "review",
+        "verdict",
+        "completion"
+      ]
+    },
+    {
+      "id": "recovery-resume",
+      "title": "Recover or resume interrupted work",
+      "classification": "substantial",
+      "lifecycle": [
+        "source-truth-preflight",
+        "recover-canonical-handoff",
+        "compare-provider-and-repository-state",
+        "classify-safe-resume-point",
+        "restore-or-supersede-assignment",
+        "rerun-stale-checks",
+        "continue-execution",
+        "review",
+        "completion"
+      ],
+      "topology": ["recovery", "verifier"],
+      "worktreeRequired": true,
+      "requiredReceipts": [
+        "source-truth-preflight",
+        "recovery",
+        "diff",
+        "checks",
+        "review",
+        "completion"
+      ]
+    },
+    {
+      "id": "anvil-package-execution",
+      "title": "ANVIL package execution",
+      "projectProfile": "ANVIL",
+      "classification": "substantial",
+      "lifecycle": [
+        "read-project-instructions",
+        "read-command-center",
+        "load-canonical-manifest",
+        "select-next-executable-package",
+        "source-truth-preflight-event",
+        "isolated-package-execution",
+        "focused-verification",
+        "receipt-production",
+        "canonical-state-update",
+        "authorized-integration-or-pr",
+        "completion"
+      ],
+      "topology": ["executor", "advisor", "verifier"],
+      "worktreeRequired": true,
+      "linuxNode": {
+        "pythonAllowed": false,
+        "pinSourceCommit": true,
+        "contentAddressedArtifacts": true,
+        "macIntegrationSeparate": true
+      },
+      "requiredReceipts": [
+        "source-truth-preflight",
+        "canonical-package-selection",
+        "plan",
+        "commands",
+        "checks",
+        "diff",
+        "review",
+        "canonical-state-update",
+        "completion"
+      ]
+    },
+    {
+      "id": "ane-re-experiment",
+      "title": "ANE-RE experiment campaign",
+      "projectProfile": "ANE-RE",
+      "classification": "substantial",
+      "lifecycle": [
+        "repository-and-ledger-preflight",
+        "hypothesis-and-falsification",
+        "baseline-artifact-pin",
+        "harness-correctness",
+        "placement-evidence-plan",
+        "measurement-floor-plan",
+        "execution",
+        "raw-artifact-preservation",
+        "independent-recomputation",
+        "canonical-verdict",
+        "ledger-update",
+        "integration-or-falsified-closeout"
+      ],
+      "topology": ["explorer", "executor", "advisor", "verifier"],
+      "worktreeRequired": true,
+      "linuxNode": {
+        "pythonAllowed": false,
+        "allowedFor": [
+          "native-cpu-work",
+          "compiled-statistics",
+          "artifact-validation",
+          "independent-recomputation"
+        ],
+        "notProofOf": ["ANE-placement", "ANE-residency"]
+      },
+      "requiredReceipts": [
+        "source-truth-preflight",
+        "experiment-contract",
+        "environment",
+        "correctness",
+        "placement-when-claimed",
+        "measurement",
+        "raw-artifacts",
+        "independent-review",
+        "verdict",
+        "ledger-update",
+        "completion"
+      ]
+    },
+    {
+      "id": "native-macos-system-feature",
+      "title": "Native macOS system feature",
+      "projectProfiles": ["MacBrains", "NeoDSP"],
+      "classification": "high-risk",
+      "lifecycle": [
+        "preflight",
+        "platform-and-entitlement-orientation",
+        "architecture-advisor",
+        "implementation",
+        "focused-unit-and-integration-checks",
+        "lifecycle-and-resource-review",
+        "packaged-app-test",
+        "accessibility-and-visible-acceptance",
+        "rollback-uninstall-test",
+        "completion"
+      ],
+      "topology": ["executor", "advisor", "verifier"],
+      "worktreeRequired": true,
+      "requiredReceipts": [
+        "source-truth-preflight",
+        "advisor",
+        "platform-review",
+        "checks",
+        "packaging",
+        "ui-acceptance",
+        "rollback",
+        "completion"
+      ]
+    },
+    {
+      "id": "documentation-artifact",
+      "title": "Documentation or reusable artifact",
+      "classification": "bounded",
+      "lifecycle": [
+        "source-read",
+        "draft",
+        "format-or-render-validation",
+        "fact-and-link-verification",
+        "deliverable",
+        "completion"
+      ],
+      "topology": ["executor", "verifier"],
+      "worktreeRequired": "when-repository-tracked",
+      "requiredReceipts": [
+        "source-truth-preflight-when-repository-tracked",
+        "artifact",
+        "validation",
+        "review",
+        "completion"
+      ]
+    }
+  ]
+}

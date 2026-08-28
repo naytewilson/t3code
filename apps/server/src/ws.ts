@@ -30,6 +30,7 @@ import {
   type OrchestrationShellStreamEvent,
   type OrchestrationShellStreamItem,
   type OrchestrationThreadStreamItem,
+  type OrchestrationLaneStreamItem,
   OrchestrationGetFullThreadDiffError,
   OrchestrationGetSnapshotError,
   OrchestrationSearchThreadsError,
@@ -56,6 +57,7 @@ import {
   RpcClientId,
   EnvironmentAuthorizationError,
   ThreadId,
+  WorkLaneId,
   type TerminalAttachStreamEvent,
   type TerminalError,
   type TerminalEvent,
@@ -134,8 +136,10 @@ import * as VcsProcess from "./vcs/VcsProcess.ts";
 import * as PairingGrantStore from "./auth/PairingGrantStore.ts";
 import * as SessionStore from "./auth/SessionStore.ts";
 import { failEnvironmentAuthInvalid, failEnvironmentInternal } from "./auth/http.ts";
+import { shouldResumeLaneWithSnapshot } from "./laneResume.ts";
 import * as RelayClient from "@t3tools/shared/relayClient";
 const isOrchestrationDispatchCommandError = Schema.is(OrchestrationDispatchCommandError);
+const isOrchestrationGetSnapshotError = Schema.is(OrchestrationGetSnapshotError);
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 const CONFIG_DISCOVERY_TIMEOUT = Duration.seconds(5);
@@ -671,6 +675,16 @@ const makeWsRpcLayer = (
             );
           case "thread.unarchived":
             return threadUpsertOrRemove(event.payload.threadId, event.sequence);
+          case "lane.created":
+          case "lane.imported":
+          case "lane.state-changed":
+          case "lane.task-contract-updated":
+          case "lane.meta-updated":
+          case "lane.plan-proposed":
+          case "lane.plan-activated":
+          case "lane.deliverable-registered":
+          case "source-truth.preflight-recorded":
+            return laneUpsertOrRemove(WorkLaneId.make(event.aggregateId), event.sequence);
           default:
             if (event.aggregateKind !== "thread") {
               return Effect.succeed(Option.none());
@@ -685,7 +699,7 @@ const makeWsRpcLayer = (
       // If both attempts fail, log and drop the stream item; treating an error as
       // a missing row would incorrectly remove a still-active aggregate.
       const retryShellProjectionRead = <A, E>(
-        aggregateKind: "project" | "thread",
+        aggregateKind: "project" | "thread" | "lane",
         aggregateId: string,
         read: Effect.Effect<A, E>,
       ): Effect.Effect<Option.Option<A>, never, never> =>
@@ -764,6 +778,35 @@ const makeWsRpcLayer = (
                     kind: "thread-upserted" as const,
                     sequence,
                     thread: nextThread,
+                  }),
+              }),
+            ),
+          ),
+        );
+
+      const laneUpsertOrRemove = (
+        laneId: WorkLaneId,
+        sequence: number,
+      ): Effect.Effect<Option.Option<OrchestrationShellStreamEvent>, never, never> =>
+        retryShellProjectionRead(
+          "lane",
+          laneId,
+          projectionSnapshotQuery.getLaneShellById(laneId),
+        ).pipe(
+          Effect.map(
+            Option.flatMap((lane) =>
+              Option.match(lane, {
+                onNone: () =>
+                  Option.some<OrchestrationShellStreamEvent>({
+                    kind: "lane-removed" as const,
+                    sequence,
+                    laneId,
+                  }),
+                onSome: (nextLane) =>
+                  Option.some<OrchestrationShellStreamEvent>({
+                    kind: "lane-upserted" as const,
+                    sequence,
+                    lane: nextLane,
                   }),
               }),
             ),
@@ -1566,6 +1609,148 @@ const makeWsRpcLayer = (
                 Stream.make({
                   kind: "snapshot" as const,
                   snapshot: projectThreadDetailSnapshot(snapshot.value),
+                }),
+                afterSnapshot,
+              );
+            }),
+            { "rpc.aggregate": "orchestration" },
+          ),
+        [ORCHESTRATION_WS_METHODS.getLaneDetail]: (input) =>
+          observeRpcEffect(
+            ORCHESTRATION_WS_METHODS.getLaneDetail,
+            projectionSnapshotQuery.getLaneDetail(input.laneId).pipe(
+              Effect.flatMap((snapshot) =>
+                Option.match(snapshot, {
+                  onNone: () =>
+                    Effect.fail(
+                      new OrchestrationGetSnapshotError({
+                        message: `Lane ${input.laneId} was not found`,
+                        cause: input.laneId,
+                      }),
+                    ),
+                  onSome: (value) => Effect.succeed(value),
+                }),
+              ),
+              Effect.mapError((cause) =>
+                isOrchestrationGetSnapshotError(cause)
+                  ? cause
+                  : new OrchestrationGetSnapshotError({
+                      message: `Failed to load lane ${input.laneId}`,
+                      cause,
+                    }),
+              ),
+            ),
+            { "rpc.aggregate": "orchestration" },
+          ),
+        [ORCHESTRATION_WS_METHODS.subscribeLane]: (input) =>
+          observeRpcStreamEffect(
+            ORCHESTRATION_WS_METHODS.subscribeLane,
+            Effect.gen(function* () {
+              const isThisLaneEvent = (event: OrchestrationEvent) =>
+                event.aggregateKind === "lane" && event.aggregateId === input.laneId;
+
+              const liveStream = orchestrationEngine.streamDomainEvents.pipe(
+                Stream.filter(isThisLaneEvent),
+                Stream.map((event) => ({
+                  kind: "event" as const,
+                  event,
+                })),
+              );
+
+              const liveBuffer = yield* Queue.unbounded<OrchestrationLaneStreamItem>();
+              yield* Effect.forkScoped(
+                liveStream.pipe(Stream.runForEach((item) => Queue.offer(liveBuffer, item))),
+              );
+              const bufferedLiveStream = Stream.fromQueue(liveBuffer);
+
+              if (input.afterSequence !== undefined) {
+                const afterSequence = input.afterSequence;
+                const headSequence = yield* orchestrationEngine.latestSequence;
+                const replayGap = headSequence - afterSequence;
+                const afterCatchUp =
+                  input.requestCompletionMarker === true
+                    ? Stream.concat(
+                        Stream.fromEffect(
+                          Queue.offer(liveBuffer, { kind: "synchronized" as const }),
+                        ).pipe(Stream.drain),
+                        bufferedLiveStream,
+                      )
+                    : bufferedLiveStream;
+
+                if (shouldResumeLaneWithSnapshot(headSequence, afterSequence)) {
+                  const snapshot = yield* projectionSnapshotQuery.getLaneDetail(input.laneId).pipe(
+                    Effect.mapError(
+                      (cause) =>
+                        new OrchestrationGetSnapshotError({
+                          message: `Failed to load lane ${input.laneId}`,
+                          cause,
+                        }),
+                    ),
+                  );
+                  if (Option.isNone(snapshot)) {
+                    return yield* new OrchestrationGetSnapshotError({
+                      message: `Lane ${input.laneId} was not found`,
+                      cause: input.laneId,
+                    });
+                  }
+                  return Stream.concat(
+                    Stream.make({
+                      kind: "snapshot" as const,
+                      snapshot: snapshot.value,
+                    }),
+                    afterCatchUp,
+                  );
+                }
+
+                const catchUpStream = orchestrationEngine
+                  .readEvents(afterSequence, replayGap)
+                  .pipe(
+                    Stream.filter(isThisLaneEvent),
+                    Stream.map((event) => ({
+                      kind: "event" as const,
+                      event,
+                    })),
+                    Stream.mapError(
+                      (cause) =>
+                        new OrchestrationGetSnapshotError({
+                          message: `Failed to replay lane ${input.laneId} events`,
+                          cause,
+                        }),
+                    ),
+                  );
+                return Stream.concat(catchUpStream, afterCatchUp);
+              }
+
+              const snapshot = yield* projectionSnapshotQuery.getLaneDetail(input.laneId).pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new OrchestrationGetSnapshotError({
+                      message: `Failed to load lane ${input.laneId}`,
+                      cause,
+                    }),
+                ),
+              );
+
+              if (Option.isNone(snapshot)) {
+                return yield* new OrchestrationGetSnapshotError({
+                  message: `Lane ${input.laneId} was not found`,
+                  cause: input.laneId,
+                });
+              }
+
+              const afterSnapshot =
+                input.requestCompletionMarker === true
+                  ? Stream.concat(
+                      Stream.fromEffect(
+                        Queue.offer(liveBuffer, { kind: "synchronized" as const }),
+                      ).pipe(Stream.drain),
+                      bufferedLiveStream,
+                    )
+                  : bufferedLiveStream;
+              return Stream.concat(
+                Stream.make({
+                  kind: "snapshot" as const,
+                  snapshot: snapshot.value,
                 }),
                 afterSnapshot,
               );

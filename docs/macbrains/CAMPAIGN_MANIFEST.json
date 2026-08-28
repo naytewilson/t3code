@@ -1,0 +1,487 @@
+{
+  "$schemaVersion": 1,
+  "campaignId": "macbrains-t3code-agent-workflow-overhaul",
+  "title": "MacBrains T3 Code Agent Workflow Overhaul",
+  "specificationBranch": "macbrains/agent-workflow-overhaul",
+  "canonicalDocuments": [
+    "MACBRAINS.md",
+    "docs/macbrains/README.md",
+    "docs/macbrains/FORK_BASELINE.md",
+    "docs/macbrains/DOCUMENTATION_AUDIT.md",
+    "docs/macbrains/PRODUCT_SPEC.md",
+    "docs/macbrains/PROJECT_PROFILES.md",
+    "docs/macbrains/DOMAIN_MODEL.md",
+    "docs/macbrains/IMPLEMENTATION_LEDGER.md",
+    "docs/macbrains/CAMPAIGN_MANIFEST.json",
+    "docs/macbrains/ORCHESTRATION_PLAN.md",
+    "docs/macbrains/WORKFLOW_TEMPLATES.json",
+    "docs/macbrains/ACCEPTANCE_MATRIX.md",
+    "docs/macbrains/DEFAULT_POLICIES.json",
+    "docs/macbrains/FORK_IDENTITY_AND_RELEASE.md",
+    "docs/macbrains/PULL_TO_MAC.md",
+    "docs/macbrains/IMPLEMENTATION_HANDOFF.md",
+    "docs/macbrains/F0_EXECUTION_PROMPT.md",
+    "docs/macbrains/AGENT_EXECUTION_PROMPT.md"
+  ],
+  "statusVocabulary": [
+    "NOT_STARTED",
+    "IN_PROGRESS",
+    "BLOCKED",
+    "IMPLEMENTED_UNVERIFIED",
+    "PROVEN",
+    "SUPERSEDED"
+  ],
+  "selectionRules": {
+    "chooseEarliestExecutableDependency": true,
+    "sourceTruthPreflightRequired": true,
+    "isolatedWorktreeRequired": true,
+    "disjointParallelOwnershipRequired": true,
+    "advisorForHighRisk": true,
+    "independentVerifierRequired": true,
+    "continueWithoutRoutineConfirmation": true,
+    "pullRequestRequiresTaskAuthorization": true
+  },
+  "packages": [
+    {
+      "id": "F0",
+      "title": "Work lane and source-truth contracts",
+      "status": "IMPLEMENTED",
+      "dependencies": [],
+      "ownershipGroup": "contracts-orchestration-foundation",
+      "advisorRequired": true,
+      "primaryAcceptancePrefixes": [
+        "A",
+        "B"
+      ],
+      "blocks": [
+        "F1",
+        "F3",
+        "F4",
+        "F5",
+        "N0"
+      ]
+    },
+    {
+      "id": "F1",
+      "title": "Typed receipt and evidence substrate",
+      "status": "NOT_STARTED",
+      "dependencies": [
+        "F0"
+      ],
+      "ownershipGroup": "contracts-evidence-server",
+      "advisorRequired": true,
+      "primaryAcceptancePrefixes": [
+        "G"
+      ],
+      "blocks": [
+        "F2",
+        "D0",
+        "R0"
+      ]
+    },
+    {
+      "id": "F2",
+      "title": "Checks, acceptance criteria, and completion gate",
+      "status": "NOT_STARTED",
+      "dependencies": [
+        "F0",
+        "F1"
+      ],
+      "ownershipGroup": "orchestration-completion",
+      "advisorRequired": true,
+      "primaryAcceptancePrefixes": [
+        "H"
+      ],
+      "blocks": [
+        "D0",
+        "D1",
+        "E0"
+      ]
+    },
+    {
+      "id": "F3",
+      "title": "Agent assignments and topology",
+      "status": "NOT_STARTED",
+      "dependencies": [
+        "F0"
+      ],
+      "ownershipGroup": "assignments-topology",
+      "advisorRequired": true,
+      "primaryAcceptancePrefixes": [
+        "D"
+      ],
+      "blocks": [
+        "P0",
+        "F6"
+      ]
+    },
+    {
+      "id": "F4",
+      "title": "Worktree and ownership manager",
+      "status": "NOT_STARTED",
+      "dependencies": [
+        "F0"
+      ],
+      "ownershipGroup": "git-worktrees",
+      "advisorRequired": true,
+      "primaryAcceptancePrefixes": [
+        "C"
+      ],
+      "blocks": [
+        "G0",
+        "F6"
+      ]
+    },
+    {
+      "id": "F5",
+      "title": "Command Center and projections",
+      "status": "NOT_STARTED",
+      "dependencies": [
+        "F0",
+        "F1",
+        "F2",
+        "F3"
+      ],
+      "ownershipGroup": "client-runtime-command-center",
+      "advisorRequired": false,
+      "primaryAcceptancePrefixes": [
+        "K"
+      ],
+      "blocks": [
+        "F6"
+      ]
+    },
+    {
+      "id": "F6",
+      "title": "Lane detail and cross-surface controls",
+      "status": "NOT_STARTED",
+      "dependencies": [
+        "F2",
+        "F3",
+        "F4",
+        "F5"
+      ],
+      "ownershipGroup": "web-desktop-mobile-lane-ui",
+      "advisorRequired": false,
+      "primaryAcceptancePrefixes": [
+        "J",
+        "K",
+        "L"
+      ],
+      "blocks": [
+        "E0"
+      ]
+    },
+    {
+      "id": "P0",
+      "title": "Provider event normalization",
+      "status": "NOT_STARTED",
+      "dependencies": [
+        "F3"
+      ],
+      "ownershipGroup": "provider-adapters",
+      "advisorRequired": true,
+      "primaryAcceptancePrefixes": [
+        "E"
+      ],
+      "blocks": [
+        "P1",
+        "P2"
+      ]
+    },
+    {
+      "id": "P1",
+      "title": "Background activity leases and session reaper correctness",
+      "status": "NOT_STARTED",
+      "dependencies": [
+        "P0"
+      ],
+      "ownershipGroup": "provider-lifecycle",
+      "advisorRequired": true,
+      "primaryAcceptancePrefixes": [
+        "F"
+      ],
+      "blocks": [
+        "E0"
+      ]
+    },
+    {
+      "id": "P2",
+      "title": "Context health, compaction, and recovery handoff",
+      "status": "NOT_STARTED",
+      "dependencies": [
+        "F1",
+        "F3",
+        "P0"
+      ],
+      "ownershipGroup": "provider-context-recovery",
+      "advisorRequired": true,
+      "primaryAcceptancePrefixes": [
+        "E",
+        "F"
+      ],
+      "blocks": [
+        "E0"
+      ]
+    },
+    {
+      "id": "N0",
+      "title": "First-class environment and node policy",
+      "status": "NOT_STARTED",
+      "dependencies": [
+        "F0"
+      ],
+      "ownershipGroup": "environment-node-contracts",
+      "advisorRequired": true,
+      "primaryAcceptancePrefixes": [
+        "I",
+        "J"
+      ],
+      "blocks": [
+        "N1"
+      ]
+    },
+    {
+      "id": "N1",
+      "title": "Node job runtime",
+      "status": "NOT_STARTED",
+      "dependencies": [
+        "F1",
+        "N0"
+      ],
+      "ownershipGroup": "node-runtime",
+      "advisorRequired": true,
+      "primaryAcceptancePrefixes": [
+        "I"
+      ],
+      "blocks": [
+        "N2"
+      ]
+    },
+    {
+      "id": "N2",
+      "title": "Artifact return and Mac integration",
+      "status": "NOT_STARTED",
+      "dependencies": [
+        "F1",
+        "F2",
+        "N1"
+      ],
+      "ownershipGroup": "artifact-transfer-integration",
+      "advisorRequired": true,
+      "primaryAcceptancePrefixes": [
+        "I"
+      ],
+      "blocks": [
+        "E0"
+      ]
+    },
+    {
+      "id": "R0",
+      "title": "Atomic persistence and last-known-good recovery",
+      "status": "NOT_STARTED",
+      "dependencies": [
+        "F1"
+      ],
+      "ownershipGroup": "persistence-reliability",
+      "advisorRequired": true,
+      "primaryAcceptancePrefixes": [
+        "P"
+      ],
+      "blocks": [
+        "R1"
+      ]
+    },
+    {
+      "id": "R1",
+      "title": "Event/projection and heavy-thread resilience",
+      "status": "NOT_STARTED",
+      "dependencies": [
+        "F1",
+        "R0"
+      ],
+      "ownershipGroup": "projection-resilience",
+      "advisorRequired": true,
+      "primaryAcceptancePrefixes": [
+        "P",
+        "Q"
+      ],
+      "blocks": [
+        "E0"
+      ]
+    },
+    {
+      "id": "D0",
+      "title": "Deliverable registry and launch actions",
+      "status": "NOT_STARTED",
+      "dependencies": [
+        "F1",
+        "F2"
+      ],
+      "ownershipGroup": "deliverables",
+      "advisorRequired": false,
+      "primaryAcceptancePrefixes": [
+        "M"
+      ],
+      "blocks": [
+        "D1",
+        "D2"
+      ]
+    },
+    {
+      "id": "D1",
+      "title": "User-visible UI acceptance",
+      "status": "NOT_STARTED",
+      "dependencies": [
+        "D0",
+        "F6"
+      ],
+      "ownershipGroup": "ui-acceptance",
+      "advisorRequired": false,
+      "primaryAcceptancePrefixes": [
+        "M",
+        "U"
+      ],
+      "blocks": [
+        "E0"
+      ]
+    },
+    {
+      "id": "D2",
+      "title": "Actionable notifications",
+      "status": "NOT_STARTED",
+      "dependencies": [
+        "F1",
+        "D0"
+      ],
+      "ownershipGroup": "notifications",
+      "advisorRequired": true,
+      "primaryAcceptancePrefixes": [
+        "N"
+      ],
+      "blocks": [
+        "E0"
+      ]
+    },
+    {
+      "id": "G0",
+      "title": "GitHub and source-control evidence integration",
+      "status": "NOT_STARTED",
+      "dependencies": [
+        "F1",
+        "F4"
+      ],
+      "ownershipGroup": "source-control-providers",
+      "advisorRequired": false,
+      "primaryAcceptancePrefixes": [
+        "O"
+      ],
+      "blocks": [
+        "E0"
+      ]
+    },
+    {
+      "id": "S0",
+      "title": "Project instruction and skill registry",
+      "status": "NOT_STARTED",
+      "dependencies": [
+        "F0",
+        "F1"
+      ],
+      "ownershipGroup": "instructions-skills",
+      "advisorRequired": true,
+      "primaryAcceptancePrefixes": [
+        "T"
+      ],
+      "blocks": [
+        "E0"
+      ]
+    },
+    {
+      "id": "U0",
+      "title": "MacBrains branding and fork identity",
+      "status": "NOT_STARTED",
+      "dependencies": [],
+      "ownershipGroup": "fork-identity-release",
+      "advisorRequired": true,
+      "primaryAcceptancePrefixes": [
+        "S"
+      ],
+      "blocks": [
+        "E0"
+      ]
+    },
+    {
+      "id": "U1",
+      "title": "Settings and policy editor",
+      "status": "NOT_STARTED",
+      "dependencies": [
+        "F0",
+        "F3",
+        "N0"
+      ],
+      "ownershipGroup": "settings-policy-ui",
+      "advisorRequired": false,
+      "primaryAcceptancePrefixes": [
+        "R",
+        "S",
+        "T"
+      ],
+      "blocks": [
+        "E0"
+      ]
+    },
+    {
+      "id": "V0",
+      "title": "Performance and telemetry hardening",
+      "status": "NOT_STARTED",
+      "dependencies": [
+        "F5",
+        "R1"
+      ],
+      "ownershipGroup": "performance-observability",
+      "advisorRequired": true,
+      "primaryAcceptancePrefixes": [
+        "Q"
+      ],
+      "blocks": [
+        "E0"
+      ]
+    },
+    {
+      "id": "E0",
+      "title": "End-to-end daily workflow acceptance",
+      "status": "NOT_STARTED",
+      "dependencies": [
+        "F2",
+        "F6",
+        "P1",
+        "P2",
+        "N2",
+        "R1",
+        "D1",
+        "D2",
+        "G0",
+        "S0",
+        "U0",
+        "U1",
+        "V0"
+      ],
+      "ownershipGroup": "integration-verification",
+      "advisorRequired": true,
+      "primaryAcceptancePrefixes": [
+        "U"
+      ],
+      "blocks": []
+    }
+  ],
+  "releaseGate": {
+    "allRequiredAcceptanceRowsProven": true,
+    "canonicalE0ScenarioProven": true,
+    "currentRevisionEvidenceOnly": true,
+    "independentVerificationRequired": true,
+    "forkIdentityIsolationProven": true,
+    "desktopWebIphoneIpadApplicabilityCovered": true,
+    "macAndLinuxRestartRecoveryProven": true
+  }
+}

@@ -27,6 +27,17 @@ import {
   ThreadApprovalResponseRequestedPayload as ContractsThreadApprovalResponseRequestedPayloadSchema,
   ThreadCheckpointRevertRequestedPayload as ContractsThreadCheckpointRevertRequestedPayloadSchema,
   ThreadSessionStopRequestedPayload as ContractsThreadSessionStopRequestedPayloadSchema,
+  LaneCreatedPayload as ContractsLaneCreatedPayloadSchema,
+  LaneImportedPayload as ContractsLaneImportedPayloadSchema,
+  LaneStateChangedPayload as ContractsLaneStateChangedPayloadSchema,
+  LaneTaskContractUpdatedPayload as ContractsLaneTaskContractUpdatedPayloadSchema,
+  LaneMetaUpdatedPayload as ContractsLaneMetaUpdatedPayloadSchema,
+  LanePlanProposedPayload as ContractsLanePlanProposedPayloadSchema,
+  LanePlanActivatedPayload as ContractsLanePlanActivatedPayloadSchema,
+  LaneDeliverableRegisteredPayload as ContractsLaneDeliverableRegisteredPayloadSchema,
+  SourceTruthPreflightRecordedPayload as ContractsSourceTruthPreflightRecordedPayloadSchema,
+  SourceTruthConflictRecordedPayload as ContractsSourceTruthConflictRecordedPayloadSchema,
+  SourceTruthRefreshRequestedPayload as ContractsSourceTruthRefreshRequestedPayloadSchema,
 } from "@t3tools/contracts";
 
 // Server-internal alias surface, backed by contract schemas as the source of truth.
@@ -64,3 +75,16 @@ export const ThreadApprovalResponseRequestedPayload =
 export const ThreadCheckpointRevertRequestedPayload =
   ContractsThreadCheckpointRevertRequestedPayloadSchema;
 export const ThreadSessionStopRequestedPayload = ContractsThreadSessionStopRequestedPayloadSchema;
+
+export const LaneCreatedPayload = ContractsLaneCreatedPayloadSchema;
+export const LaneImportedPayload = ContractsLaneImportedPayloadSchema;
+export const LaneStateChangedPayload = ContractsLaneStateChangedPayloadSchema;
+export const LaneTaskContractUpdatedPayload = ContractsLaneTaskContractUpdatedPayloadSchema;
+export const LaneMetaUpdatedPayload = ContractsLaneMetaUpdatedPayloadSchema;
+export const LanePlanProposedPayload = ContractsLanePlanProposedPayloadSchema;
+export const LanePlanActivatedPayload = ContractsLanePlanActivatedPayloadSchema;
+export const LaneDeliverableRegisteredPayload = ContractsLaneDeliverableRegisteredPayloadSchema;
+export const SourceTruthPreflightRecordedPayload =
+  ContractsSourceTruthPreflightRecordedPayloadSchema;
+export const SourceTruthConflictRecordedPayload = ContractsSourceTruthConflictRecordedPayloadSchema;
+export const SourceTruthRefreshRequestedPayload = ContractsSourceTruthRefreshRequestedPayloadSchema;

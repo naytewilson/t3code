@@ -4,11 +4,13 @@ import { ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import type { OrchestrationShellSnapshot, OrchestrationShellStreamEvent } from "@t3tools/contracts";
 
 import { applyShellStreamEvent } from "./shellReducer.ts";
+import { applyLaneStreamItem } from "./workLanes.ts";
 
 const baseSnapshot: OrchestrationShellSnapshot = {
   snapshotSequence: 0,
   projects: [],
   threads: [],
+  lanes: [],
   updatedAt: "2026-04-01T00:00:00.000Z",
 };
 
@@ -181,5 +183,111 @@ describe("applyShellStreamEvent", () => {
     const unknownEvent = { kind: "unknown-future-event", sequence: 99 } as any;
     const next = applyShellStreamEvent(baseSnapshot, unknownEvent);
     expect(next).toBe(baseSnapshot);
+  });
+
+  describe("lane-upserted / lane-removed", () => {
+    const stubLane = {
+      id: "lane-1" as const,
+      projectId: ProjectId.make("project-1"),
+      title: "Lane",
+      state: "queued" as const,
+      priority: "normal" as const,
+      classification: "substantial" as const,
+      environmentId: "env-1" as const,
+      branch: null,
+      worktreePath: null,
+      sourceTruthRevisionId: null,
+      sourceTruthSummary: null,
+      primaryThreadId: null,
+      importedThreadId: null,
+      objectiveSummary: "Do the thing",
+      createdAt: "2026-04-01T00:00:00.000Z",
+      updatedAt: "2026-04-01T00:00:00.000Z",
+      completedAt: null,
+    };
+
+    it("adds and removes lanes while advancing sequence", () => {
+      const upserted = applyShellStreamEvent(baseSnapshot, {
+        kind: "lane-upserted",
+        sequence: 1,
+        lane: stubLane as never,
+      });
+      expect(upserted.lanes).toHaveLength(1);
+      expect(upserted.snapshotSequence).toBe(1);
+
+      const removed = applyShellStreamEvent(upserted, {
+        kind: "lane-removed",
+        sequence: 2,
+        laneId: stubLane.id as never,
+      });
+      expect(removed.lanes).toHaveLength(0);
+      expect(removed.snapshotSequence).toBe(2);
+    });
+  });
+});
+
+describe("applyLaneStreamItem", () => {
+  it("advances snapshotSequence on stream events", () => {
+    const current = {
+      snapshotSequence: 4,
+      detail: {
+        lane: {
+          id: "lane-1",
+          projectId: ProjectId.make("project-1"),
+          title: "Lane",
+          taskContract: {
+            objective: "x",
+            constraints: [],
+            nonGoals: [],
+            deliverableRequirement: "none" as const,
+            requiresPullRequest: false,
+            requiresUserVisibleSurface: false,
+            authorizedActions: [],
+            prohibitedActions: [],
+            completionReportRequired: true,
+            objectiveDerivation: "UNKNOWN" as const,
+          },
+          state: "queued" as const,
+          priority: "normal" as const,
+          classification: "substantial" as const,
+          environmentId: "env-1",
+          repositoryIdentity: null,
+          baseRef: null,
+          branch: null,
+          worktreePath: null,
+          ownerAssignmentId: null,
+          advisorAssignmentIds: [],
+          verifierAssignmentIds: [],
+          sourceTruthRevisionId: null,
+          sourceTruthActiveGitOperation: "none" as const,
+          sourceTruthOwnershipOverlap: "unknown" as const,
+          activePlanRevisionId: null,
+          supersedingLaneId: null,
+          acceptanceCriterionIds: [],
+          requiredReceiptKinds: [],
+          deliverableIds: [],
+          blockerIds: [],
+          primaryThreadId: null,
+          importedThreadId: null,
+          threadIds: [],
+          legacyExecutorRef: null,
+          resumeState: null,
+          createdAt: "2026-04-01T00:00:00.000Z",
+          updatedAt: "2026-04-01T00:00:00.000Z",
+          completedAt: null,
+        },
+        acceptanceCriteria: [],
+        sourceTruthRevisions: [],
+      },
+    } as const;
+
+    const next = applyLaneStreamItem(current as never, {
+      kind: "event",
+      event: {
+        sequence: 9,
+        type: "lane.meta-updated",
+      } as never,
+    });
+    expect(next?.snapshotSequence).toBe(9);
   });
 });

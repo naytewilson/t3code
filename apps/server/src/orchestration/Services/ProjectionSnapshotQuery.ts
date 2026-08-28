@@ -21,6 +21,9 @@ import type {
   OrchestrationThreadShell,
   ProjectId,
   ThreadId,
+  WorkLaneDetailSnapshot,
+  WorkLaneId,
+  WorkLaneShell,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import type * as Option from "effect/Option";
@@ -186,6 +189,20 @@ export interface ProjectionSnapshotQueryShape {
     threadId: ThreadId,
     window?: OrchestrationThreadDetailWindow,
   ) => Effect.Effect<Option.Option<OrchestrationThreadDetailSnapshot>, ProjectionRepositoryError>;
+
+  /**
+   * Read a compact work-lane shell row by id.
+   */
+  readonly getLaneShellById: (
+    laneId: WorkLaneId,
+  ) => Effect.Effect<Option.Option<WorkLaneShell>, ProjectionRepositoryError>;
+
+  /**
+   * Read work-lane detail together with the projection snapshot sequence.
+   */
+  readonly getLaneDetail: (
+    laneId: WorkLaneId,
+  ) => Effect.Effect<Option.Option<WorkLaneDetailSnapshot>, ProjectionRepositoryError>;
 }
 
 /**

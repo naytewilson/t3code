@@ -1,3 +1,13 @@
+# MacBrains Fork Directive
+
+This branch belongs to the MacBrains fork. Before planning or editing, read `MACBRAINS.md` and every file in `docs/macbrains/` referenced by it. Those files define the fork's product contract, domain model, implementation ledger, acceptance matrix, and execution prompt.
+
+For fork work, the MacBrains contract overrides upstream product preferences where they conflict. Existing safety rules, architecture boundaries, performance discipline, multi-surface requirements, and development-state protections below remain mandatory.
+
+Do not stop after producing a plan when implementation is authorized. Use an isolated worktree, preserve source truth, keep agents visible, produce exact receipts, and do not claim completion without current tests, independent verification, and a user-visible deliverable.
+
+---
+
 # T3 Code
 
 T3 Code is a minimal GUI for coding agents. A Node WebSocket server wraps provider CLIs (Codex, Claude Code, Cursor, Grok, OpenCode) and serves web, desktop, and mobile clients.

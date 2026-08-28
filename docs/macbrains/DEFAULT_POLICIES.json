@@ -1,0 +1,187 @@
+{
+  "$schemaVersion": 1,
+  "product": {
+    "name": "MacBrains T3 Code",
+    "defaultLandingSurface": "command-center",
+    "completionRequiresVisibleDeliverable": true,
+    "claimLabels": [
+      "PROVEN",
+      "INFERRED",
+      "SUSPECTED",
+      "UNKNOWN"
+    ]
+  },
+  "sourceTruth": {
+    "authorityOrder": [
+      "repository",
+      "canonical-operational-source",
+      "current-receipts",
+      "durable-handoff",
+      "narrative"
+    ],
+    "preflightRequiredForSubstantialWork": true,
+    "refreshBeforeVerification": true,
+    "conflictBehavior": "block-or-safest-reversible-action"
+  },
+  "work": {
+    "substantialWorkUsesWorktree": true,
+    "defaultLifecycle": [
+      "queued",
+      "preflight",
+      "oriented",
+      "planned",
+      "executing",
+      "testing",
+      "reviewing",
+      "deliverable-ready",
+      "completed"
+    ],
+    "allowOverlappingEditors": false,
+    "requireMergeContractForSharedFiles": true,
+    "continueWithoutRoutineConfirmations": true
+  },
+  "agents": {
+    "defaultTopology": "executor-advisor-verifier",
+    "roles": {
+      "executor": {
+        "capabilityTier": "standard",
+        "reasoning": "medium",
+        "costPreference": "free-flat-local-first"
+      },
+      "advisor": {
+        "capabilityTier": "advanced",
+        "reasoning": "high",
+        "costPreference": "balanced"
+      },
+      "verifier": {
+        "capabilityTier": "advanced",
+        "reasoning": "high",
+        "costPreference": "balanced",
+        "mustRefreshSourceTruth": true
+      },
+      "mechanical-worker": {
+        "capabilityTier": "mechanical",
+        "reasoning": "light",
+        "costPreference": "free-flat-local-first"
+      },
+      "recovery": {
+        "capabilityTier": "standard",
+        "reasoning": "medium",
+        "requiresCanonicalHandoff": true
+      }
+    },
+    "advisorRequiredFor": [
+      "architecture",
+      "persistence-migration",
+      "concurrency",
+      "security-boundary",
+      "performance-hot-path",
+      "destructive-operation",
+      "conflicting-authorities",
+      "strategy-change-after-failure",
+      "high-risk"
+    ],
+    "visibleChildAgents": true,
+    "recordEscalationCause": true
+  },
+  "linuxNode": {
+    "firstClassEnvironment": true,
+    "pythonAllowed": false,
+    "preferredLanguages": [
+      "C",
+      "C++",
+      "Rust",
+      "Swift",
+      "shell",
+      "native-compiled-other"
+    ],
+    "pinSourceCommit": true,
+    "contentAddressedArtifacts": true,
+    "separateStates": [
+      "job-completed",
+      "artifact-returned",
+      "integrated-on-mac",
+      "verified-on-mac"
+    ],
+    "anvilUppercaseRequired": true
+  },
+  "completion": {
+    "requiredReceipts": [
+      "source-truth-preflight",
+      "orientation",
+      "plan",
+      "diff",
+      "checks",
+      "review",
+      "deliverable",
+      "ui-acceptance-when-applicable",
+      "completion"
+    ],
+    "requiredCloseoutFields": [
+      "proven",
+      "missing evidence",
+      "possibly wrong or overstated",
+      "exact next action",
+      "what does not count as completion",
+      "safe to continue here or start a fresh context"
+    ],
+    "blockOnStaleCheck": true,
+    "blockOnSkippedRequiredCheck": true,
+    "blockOnUnresolvedFinding": true,
+    "providerMessageMayCompleteLane": false
+  },
+  "surfaces": {
+    "desktop": "first-class",
+    "web": "first-class",
+    "iphone": "first-class",
+    "ipad": "first-class",
+    "remoteProjectManagementRequired": true,
+    "remoteWorktreeManagementRequired": true
+  },
+  "remote": {
+    "preferredPrivateNetwork": "tailscale",
+    "authenticatedAccessRequired": true,
+    "keepEnvironmentAccessAndLaunchSeparate": true,
+    "hostedPairTokenLocation": "url-fragment"
+  },
+  "notifications": {
+    "actionableOnly": true,
+    "triggers": [
+      "approval-required",
+      "user-input-required",
+      "blocked",
+      "failed",
+      "advisor-conflict",
+      "verifier-rejection",
+      "check-state-changed",
+      "ci-state-changed",
+      "node-job-completed",
+      "node-job-failed",
+      "pull-request-state-changed",
+      "deliverable-ready",
+      "lane-stale",
+      "environment-disconnected",
+      "recovery-required"
+    ],
+    "doNotNotifyFinishedBeforeCompletionGate": true
+  },
+  "performance": {
+    "continuousRepaintAnimationsAllowed": false,
+    "virtualizeLargeLists": true,
+    "incrementalSubscriptions": true,
+    "avoidIdleVcsPolling": true,
+    "largeLogsStoredAsArtifacts": true,
+    "heavyParsingOffUiThread": true
+  },
+  "persistence": {
+    "criticalJsonWriteMode": "atomic-replace-with-last-known-good",
+    "projectionRebuildRequired": true,
+    "deleteUserStateAsRecovery": false,
+    "liveProfileWritableFromDev": false
+  },
+  "github": {
+    "createPullRequestOnlyWhenAuthorized": true,
+    "refreshBeforeReporting": true,
+    "verifyFindingsAgainstSource": true
+  }
+}

@@ -62,6 +62,7 @@ function makeReadModel(
         session,
       },
     ],
+    lanes: [],
     updatedAt: NOW,
   };
 }
