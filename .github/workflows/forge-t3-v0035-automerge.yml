@@ -1,0 +1,35 @@
+name: Forge T3 v0.0.35 Auto-Merge
+
+on:
+  push:
+    branches:
+      - forge/t3-custom-v0035-automerge
+
+permissions:
+  contents: write
+
+jobs:
+  merge-donor:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout integration branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Merge private donor onto v0.0.35 candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin cursor/f0-worklane-source-truth-7986
+          donor="$(git rev-parse origin/cursor/f0-worklane-source-truth-7986)"
+          if git merge-base --is-ancestor "$donor" HEAD; then
+            echo "Donor already merged at $donor"
+            exit 0
+          fi
+          git merge --no-ff -X theirs --no-edit "$donor"
+          echo "MERGED_HEAD=$(git rev-parse HEAD)"
+          git status --short
+          git push origin HEAD:forge/t3-custom-v0035-automerge
