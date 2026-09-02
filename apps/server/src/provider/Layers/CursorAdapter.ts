@@ -240,6 +240,45 @@ function findModeByAliases(
   return undefined;
 }
 
+/**
+ * Matches aliases against mode ids and names only.
+ *
+ * Descriptions are prose and produce false positives: forge's planning mode is
+ * described as "planning mode without code changes" and its research mode as
+ * "codebase exploration", so both match the implement alias "code" and T3 would
+ * put the agent in a read-only mode. Plan detection below still reads the
+ * description, where a false positive only makes T3 avoid a mode.
+ */
+function findModeByIdOrName(
+  modes: ReadonlyArray<AcpSessionMode>,
+  aliases: ReadonlyArray<string>,
+): AcpSessionMode | undefined {
+  const normalizedAliases = aliases.map((alias) => alias.toLowerCase());
+  const identityWords = (mode: AcpSessionMode) =>
+    `${mode.id} ${mode.name}`
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, " ")
+      .trim()
+      .split(" ");
+  for (const alias of normalizedAliases) {
+    const exact = modes.find((mode) => {
+      const id = mode.id.toLowerCase();
+      const name = mode.name.toLowerCase();
+      return id === alias || name === alias;
+    });
+    if (exact) {
+      return exact;
+    }
+  }
+  for (const alias of normalizedAliases) {
+    const partial = modes.find((mode) => identityWords(mode).includes(alias));
+    if (partial) {
+      return partial;
+    }
+  }
+  return undefined;
+}
+
 function isPlanMode(mode: AcpSessionMode): boolean {
   return findModeByAliases([mode], ACP_PLAN_MODE_ALIASES) !== undefined;
 }
@@ -258,23 +297,27 @@ function resolveRequestedModeId(input: {
     return findModeByAliases(modeState.availableModes, ACP_PLAN_MODE_ALIASES)?.id;
   }
 
+  // Working modes are chosen from the modes that are not plan modes, so a
+  // planning mode never becomes the agent's implement or approval mode.
+  const workingModes = modeState.availableModes.filter((mode) => !isPlanMode(mode));
+  const currentMode = workingModes.find((mode) => mode.id === modeState.currentModeId);
+
   if (input.runtimeMode === "approval-required") {
     return (
-      findModeByAliases(modeState.availableModes, ACP_APPROVAL_MODE_ALIASES)?.id ??
-      findModeByAliases(modeState.availableModes, ACP_IMPLEMENT_MODE_ALIASES)?.id ??
-      modeState.availableModes.find((mode) => !isPlanMode(mode))?.id ??
+      findModeByIdOrName(workingModes, ACP_APPROVAL_MODE_ALIASES)?.id ??
+      findModeByIdOrName(workingModes, ACP_IMPLEMENT_MODE_ALIASES)?.id ??
+      currentMode?.id ??
+      workingModes[0]?.id ??
       modeState.currentModeId
     );
   }
 
-  const currentMode = modeState.availableModes.find((mode) => mode.id === modeState.currentModeId);
   return (
-    findModeByAliases(modeState.availableModes, ACP_IMPLEMENT_MODE_ALIASES)?.id ??
-    findModeByAliases(modeState.availableModes, ACP_APPROVAL_MODE_ALIASES)?.id ??
-    // No alias matched: the agent's own default is the right full-access mode
-    // unless it is a plan mode.
-    (currentMode && !isPlanMode(currentMode) ? currentMode.id : undefined) ??
-    modeState.availableModes.find((mode) => !isPlanMode(mode))?.id ??
+    findModeByIdOrName(workingModes, ACP_IMPLEMENT_MODE_ALIASES)?.id ??
+    findModeByIdOrName(workingModes, ACP_APPROVAL_MODE_ALIASES)?.id ??
+    // No alias matched: the agent's own default is the right working mode.
+    currentMode?.id ??
+    workingModes[0]?.id ??
     modeState.currentModeId
   );
 }

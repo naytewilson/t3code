@@ -50,6 +50,34 @@ const defaultModels = (capabilities: ModelCapabilities = EMPTY_CAPABILITIES) => 
   },
 ];
 
+/**
+ * Reads `_meta.availableCommands` from an initialize response. The field is
+ * optional and agent-defined, so anything unexpected is ignored rather than
+ * failing the probe.
+ */
+function parseAdvertisedCommands(
+  meta: { readonly [key: string]: unknown } | null | undefined,
+): ReadonlyArray<EffectAcpSchema.AvailableCommand> {
+  const advertised = meta?.availableCommands;
+  if (!Array.isArray(advertised)) {
+    return [];
+  }
+  return advertised.flatMap((entry) => {
+    if (typeof entry !== "object" || entry === null) {
+      return [];
+    }
+    const { name, description } = entry as { name?: unknown; description?: unknown };
+    return typeof name === "string" && name.length > 0
+      ? [
+          {
+            name,
+            description: typeof description === "string" ? description : "",
+          } as EffectAcpSchema.AvailableCommand,
+        ]
+      : [];
+  });
+}
+
 function missingCommandMessage(command: string): string {
   return command ? `${command} is not installed or not on PATH.` : "Configure an ACP CLI command.";
 }
@@ -195,6 +223,13 @@ export const AcpDriver: ProviderDriver<AcpSettings, AcpDriverEnv> = {
         }
 
         const agentInfo = connected.success.agentInfo;
+        // ACP advertises commands per session, so a client has nothing to show
+        // until the first message. Agents may also publish the list on the
+        // initialize response, which the probe can read before any session.
+        const advertisedCommands = parseAdvertisedCommands(connected.success._meta);
+        if (advertisedCommands.length > 0) {
+          yield* Ref.set(observedCommandsRef, advertisedCommands);
+        }
         const observedOptions = yield* Ref.get(observedConfigRef);
         const modelCapabilities = buildAcpModelCapabilities(observedOptions);
         const models = extractModelOptions(observedOptions).map((model) => ({
