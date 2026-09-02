@@ -293,7 +293,10 @@ export const AcpDriver: ProviderDriver<AcpSettings, AcpDriverEnv> = {
               : "ACP handshake succeeded. Models are discovered from the first active session.",
           ...(discoveredDisplayName ? { displayName: discoveredDisplayName } : {}),
           version: agentInfo?.version.trim() || null,
-          models: [...defaultModels(modelCapabilities), ...models],
+          // "Agent default" only stands in while the agent has not reported
+          // models. Once it has, its current model is marked as the default
+          // and the placeholder would be a second way to say the same thing.
+          models: models.length > 0 ? models : defaultModels(modelCapabilities),
           slashCommands: yield* Ref.get(observedCommandsRef),
         });
       }).pipe(
