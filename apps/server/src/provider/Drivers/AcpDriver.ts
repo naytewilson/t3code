@@ -64,7 +64,7 @@ function modelsFromInitialize(
   }
   const currentModelId = modelState.currentModelId.trim();
   const seen = new Set<string>();
-  return modelState.availableModels.flatMap((model): ServerProviderModel[] => {
+  const models = modelState.availableModels.flatMap((model): ServerProviderModel[] => {
     const slug = model.modelId.trim();
     if (!slug || seen.has(slug)) {
       return [];
@@ -80,6 +80,13 @@ function modelsFromInitialize(
       },
     ];
   });
+  // Agents return their list in whatever order the provider does; show the
+  // current model first and the rest alphabetically.
+  return models.toSorted(
+    (left, right) =>
+      Number(right.isDefault === true) - Number(left.isDefault === true) ||
+      left.name.localeCompare(right.name),
+  );
 }
 
 /**
