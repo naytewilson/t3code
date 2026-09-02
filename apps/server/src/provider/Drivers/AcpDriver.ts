@@ -273,13 +273,15 @@ export const AcpDriver: ProviderDriver<AcpSettings, AcpDriverEnv> = {
         }));
         // Models are session state in ACP, so an agent that advertises them on
         // the initialize response gives the model picker something to show
-        // before any session exists. Session config options win once a session
-        // has reported them.
+        // before any session exists. That list comes from the probe that just
+        // ran; the session config options may have been observed from an
+        // earlier session against an older agent build, so the advertised list
+        // wins when present.
         const advertisedModels = modelsFromInitialize(
           sessionModelStateFromInitialize(connected.success),
           modelCapabilities,
         );
-        const models = configuredModels.length > 0 ? configuredModels : advertisedModels;
+        const models = advertisedModels.length > 0 ? advertisedModels : configuredModels;
         const discoveredDisplayName = agentInfo?.title?.trim() || agentInfo?.name.trim();
         return makeSnapshot({
           checkedAt,
