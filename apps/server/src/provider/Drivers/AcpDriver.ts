@@ -25,7 +25,11 @@ import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { makeUnsupportedTextGeneration } from "../../textGeneration/TextGeneration.ts";
 import * as AcpSessionRuntime from "../acp/AcpSessionRuntime.ts";
-import { buildAcpModelCapabilities, extractModelOptions } from "../acp/AcpRuntimeModel.ts";
+import {
+  buildAcpModelCapabilities,
+  extractModelOptions,
+  sessionModelStateFromInitialize,
+} from "../acp/AcpRuntimeModel.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { type AcpAdapterProfile, makeAcpAdapter } from "../Layers/CursorAdapter.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
@@ -49,6 +53,34 @@ const defaultModels = (capabilities: ModelCapabilities = EMPTY_CAPABILITIES) => 
     capabilities,
   },
 ];
+
+/** Models an agent advertised on its initialize response, current one first. */
+function modelsFromInitialize(
+  modelState: EffectAcpSchema.SessionModelState | undefined,
+  capabilities: ModelCapabilities,
+): ReadonlyArray<ServerProviderModel> {
+  if (!modelState) {
+    return [];
+  }
+  const currentModelId = modelState.currentModelId.trim();
+  const seen = new Set<string>();
+  return modelState.availableModels.flatMap((model): ServerProviderModel[] => {
+    const slug = model.modelId.trim();
+    if (!slug || seen.has(slug)) {
+      return [];
+    }
+    seen.add(slug);
+    return [
+      {
+        slug,
+        name: model.name.trim() || slug,
+        isCustom: false,
+        ...(slug === currentModelId ? { isDefault: true } : {}),
+        capabilities,
+      },
+    ];
+  });
+}
 
 /**
  * Reads `_meta.availableCommands` from an initialize response. The field is
@@ -232,13 +264,22 @@ export const AcpDriver: ProviderDriver<AcpSettings, AcpDriverEnv> = {
         }
         const observedOptions = yield* Ref.get(observedConfigRef);
         const modelCapabilities = buildAcpModelCapabilities(observedOptions);
-        const models = extractModelOptions(observedOptions).map((model) => ({
+        const configuredModels = extractModelOptions(observedOptions).map((model) => ({
           slug: model.id,
           name: model.name,
           isCustom: false,
           ...(model.isDefault ? { isDefault: true } : {}),
           capabilities: modelCapabilities,
         }));
+        // Models are session state in ACP, so an agent that advertises them on
+        // the initialize response gives the model picker something to show
+        // before any session exists. Session config options win once a session
+        // has reported them.
+        const advertisedModels = modelsFromInitialize(
+          sessionModelStateFromInitialize(connected.success),
+          modelCapabilities,
+        );
+        const models = configuredModels.length > 0 ? configuredModels : advertisedModels;
         const discoveredDisplayName = agentInfo?.title?.trim() || agentInfo?.name.trim();
         return makeSnapshot({
           checkedAt,
