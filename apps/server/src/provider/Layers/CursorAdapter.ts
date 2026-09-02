@@ -300,25 +300,21 @@ function resolveRequestedModeId(input: {
   // Working modes are chosen from the modes that are not plan modes, so a
   // planning mode never becomes the agent's implement or approval mode.
   const workingModes = modeState.availableModes.filter((mode) => !isPlanMode(mode));
-  const currentMode = workingModes.find((mode) => mode.id === modeState.currentModeId);
 
+  // When no alias matches, T3 is not modelling this agent's modes: leave the
+  // mode alone rather than forcing one. The requested mode is re-applied on
+  // every turn, so forcing one here would undo a mode the user chose through
+  // the agent itself (forge's `/muse`, for example).
   if (input.runtimeMode === "approval-required") {
     return (
       findModeByIdOrName(workingModes, ACP_APPROVAL_MODE_ALIASES)?.id ??
-      findModeByIdOrName(workingModes, ACP_IMPLEMENT_MODE_ALIASES)?.id ??
-      currentMode?.id ??
-      workingModes[0]?.id ??
-      modeState.currentModeId
+      findModeByIdOrName(workingModes, ACP_IMPLEMENT_MODE_ALIASES)?.id
     );
   }
 
   return (
     findModeByIdOrName(workingModes, ACP_IMPLEMENT_MODE_ALIASES)?.id ??
-    findModeByIdOrName(workingModes, ACP_APPROVAL_MODE_ALIASES)?.id ??
-    // No alias matched: the agent's own default is the right working mode.
-    currentMode?.id ??
-    workingModes[0]?.id ??
-    modeState.currentModeId
+    findModeByIdOrName(workingModes, ACP_APPROVAL_MODE_ALIASES)?.id
   );
 }
 
