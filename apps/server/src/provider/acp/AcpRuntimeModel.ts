@@ -848,6 +848,7 @@ function boundToolCallRawPayload(
 export function parseSessionUpdateEvent(params: EffectAcpSchema.SessionNotification): {
   readonly modeId?: string;
   readonly configOptions?: ReadonlyArray<EffectAcpSchema.SessionConfigOption>;
+  readonly availableCommands?: ReadonlyArray<EffectAcpSchema.AvailableCommand>;
   readonly events: ReadonlyArray<AcpParsedSessionEvent>;
 } {
   const upd = params.update;
@@ -858,6 +859,11 @@ export function parseSessionUpdateEvent(params: EffectAcpSchema.SessionNotificat
     case "config_option_update":
       return {
         configOptions: upd.configOptions,
+        events,
+      };
+    case "available_commands_update":
+      return {
+        availableCommands: upd.availableCommands,
         events,
       };
     case "current_mode_update": {

@@ -80,6 +80,9 @@ export const AcpDriver: ProviderDriver<AcpSettings, AcpDriverEnv> = {
         driverKind: DRIVER_KIND,
         instanceId,
       });
+      const observedCommandsRef = yield* Ref.make<ReadonlyArray<EffectAcpSchema.AvailableCommand>>(
+        [],
+      );
       const observedConfigRef = yield* Ref.make<ReadonlyArray<EffectAcpSchema.SessionConfigOption>>(
         [],
       );
@@ -108,11 +111,16 @@ export const AcpDriver: ProviderDriver<AcpSettings, AcpDriverEnv> = {
         readonly displayName?: string;
         readonly version?: string | null;
         readonly models?: ReadonlyArray<ServerProviderModel>;
+        readonly slashCommands?: ReadonlyArray<EffectAcpSchema.AvailableCommand>;
       }) => ({
         ...buildServerProvider({
           presentation: { displayName: displayName?.trim() || input.displayName || agentName },
           enabled,
           checkedAt: input.checkedAt,
+          slashCommands: (input.slashCommands ?? []).map((command) => ({
+            name: command.name,
+            ...(command.description.trim() ? { description: command.description.trim() } : {}),
+          })),
           models: providerModelsFromSettings(
             input.models ?? defaultModels(),
             config.customModels,
@@ -208,6 +216,7 @@ export const AcpDriver: ProviderDriver<AcpSettings, AcpDriverEnv> = {
           ...(discoveredDisplayName ? { displayName: discoveredDisplayName } : {}),
           version: agentInfo?.version.trim() || null,
           models: [...defaultModels(modelCapabilities), ...models],
+          slashCommands: yield* Ref.get(observedCommandsRef),
         });
       }).pipe(
         Effect.provideService(FileSystem.FileSystem, fileSystem),
@@ -246,12 +255,27 @@ export const AcpDriver: ProviderDriver<AcpSettings, AcpDriverEnv> = {
             ),
           ),
         );
+      const onAvailableCommandsChanged = (
+        commands: ReadonlyArray<EffectAcpSchema.AvailableCommand>,
+      ) =>
+        Ref.set(observedCommandsRef, commands).pipe(
+          Effect.andThen(
+            snapshot.refresh.pipe(
+              Effect.catchCause((cause) =>
+                Effect.logWarning("Failed to refresh ACP slash commands.", { cause }),
+              ),
+              Effect.forkIn(driverScope),
+              Effect.asVoid,
+            ),
+          ),
+        );
       const adapter = yield* makeAcpAdapter(
         {
           provider: DRIVER_KIND,
           displayName: agentName,
           modelSelection: "standard",
           onConfigOptionsChanged,
+          onAvailableCommandsChanged,
           makeRuntime,
         },
         { environment: processEnv, instanceId },

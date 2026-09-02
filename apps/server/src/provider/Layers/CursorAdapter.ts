@@ -136,6 +136,9 @@ export interface AcpAdapterProfile {
   readonly onConfigOptionsChanged?: (
     options: ReadonlyArray<EffectAcpSchema.SessionConfigOption>,
   ) => Effect.Effect<void, never>;
+  readonly onAvailableCommandsChanged?: (
+    commands: ReadonlyArray<EffectAcpSchema.AvailableCommand>,
+  ) => Effect.Effect<void, never>;
   readonly makeRuntime: AcpAdapterRuntimeFactory;
 }
 
@@ -264,9 +267,13 @@ function resolveRequestedModeId(input: {
     );
   }
 
+  const currentMode = modeState.availableModes.find((mode) => mode.id === modeState.currentModeId);
   return (
     findModeByAliases(modeState.availableModes, ACP_IMPLEMENT_MODE_ALIASES)?.id ??
     findModeByAliases(modeState.availableModes, ACP_APPROVAL_MODE_ALIASES)?.id ??
+    // No alias matched: the agent's own default is the right full-access mode
+    // unless it is a plan mode.
+    (currentMode && !isPlanMode(currentMode) ? currentMode.id : undefined) ??
     modeState.availableModes.find((mode) => !isPlanMode(mode))?.id ??
     modeState.currentModeId
   );
@@ -581,6 +588,9 @@ export function makeAcpAdapter(profile: AcpAdapterProfile, options?: AcpAdapterO
             clientInfo: { name: "t3-code", version: "0.0.0" },
             ...(profile.onConfigOptionsChanged
               ? { onConfigOptionsChanged: profile.onConfigOptionsChanged }
+              : {}),
+            ...(profile.onAvailableCommandsChanged
+              ? { onAvailableCommandsChanged: profile.onAvailableCommandsChanged }
               : {}),
             ...(mcpSession
               ? {

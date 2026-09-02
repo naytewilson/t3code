@@ -81,6 +81,10 @@ export interface AcpSessionRuntimeOptions {
   readonly onConfigOptionsChanged?: (
     options: ReadonlyArray<EffectAcpSchema.SessionConfigOption>,
   ) => Effect.Effect<void, never>;
+  /** Agent advertised its slash commands (`available_commands_update`). */
+  readonly onAvailableCommandsChanged?: (
+    commands: ReadonlyArray<EffectAcpSchema.AvailableCommand>,
+  ) => Effect.Effect<void, never>;
   readonly requestLogger?: (event: AcpSessionRequestLogEvent) => Effect.Effect<void, never>;
   readonly protocolLogging?: {
     readonly logIncoming?: boolean;
@@ -425,6 +429,9 @@ export const make = (
           assistantSegmentRef,
           assistantItemRuntimeId,
           params: notification,
+          ...(options.onAvailableCommandsChanged
+            ? { onAvailableCommandsChanged: options.onAvailableCommandsChanged }
+            : {}),
         });
         const nextConfigOptions = yield* Ref.get(configOptionsRef);
         if (nextConfigOptions !== previousConfigOptions && options.onConfigOptionsChanged) {
@@ -924,6 +931,7 @@ const handleSessionUpdate = ({
   assistantSegmentRef,
   assistantItemRuntimeId,
   params,
+  onAvailableCommandsChanged,
 }: {
   readonly queue: Queue.Queue<AcpSessionRuntimeEvent>;
   readonly configOptionsRef: Ref.Ref<ReadonlyArray<EffectAcpSchema.SessionConfigOption>>;
@@ -932,11 +940,17 @@ const handleSessionUpdate = ({
   readonly assistantSegmentRef: Ref.Ref<AcpAssistantSegmentState>;
   readonly assistantItemRuntimeId: string;
   readonly params: EffectAcpSchema.SessionNotification;
+  readonly onAvailableCommandsChanged?: (
+    commands: ReadonlyArray<EffectAcpSchema.AvailableCommand>,
+  ) => Effect.Effect<void, never>;
 }): Effect.Effect<void> =>
   Effect.gen(function* () {
     const parsed = parseSessionUpdateEvent(params);
     if (parsed.configOptions !== undefined) {
       yield* Ref.set(configOptionsRef, parsed.configOptions);
+    }
+    if (parsed.availableCommands !== undefined && onAvailableCommandsChanged) {
+      yield* onAvailableCommandsChanged(parsed.availableCommands);
     }
     if (parsed.modeId) {
       yield* Ref.update(modeStateRef, (current) =>
