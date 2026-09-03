@@ -2,8 +2,10 @@ import {
   AntigravitySettings,
   ClaudeSettings,
   CodexSettings,
+  CommandCodeSettings,
   CursorSettings,
   GrokSettings,
+  MuseSettings,
   OpenCodeSettings,
   ProviderDriverKind,
 } from "@t3tools/contracts";
@@ -81,6 +83,18 @@ export const PROVIDER_CLIENT_DEFINITIONS: readonly ProviderClientDefinition[] = 
     label: "Antigravity",
     icon: AntigravityIcon,
     settingsSchema: AntigravitySettings,
+  },
+  {
+    value: ProviderDriverKind.make("muse"),
+    label: "Muse Code",
+    icon: OpenCodeIcon,
+    settingsSchema: MuseSettings,
+  },
+  {
+    value: ProviderDriverKind.make("commandcode"),
+    label: "Command Code",
+    icon: OpenCodeIcon,
+    settingsSchema: CommandCodeSettings,
   },
 ];
 

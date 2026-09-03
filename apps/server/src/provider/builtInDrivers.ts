@@ -22,8 +22,10 @@
  */
 import { ClaudeDriver, type ClaudeDriverEnv } from "./Drivers/ClaudeDriver.ts";
 import { CodexDriver, type CodexDriverEnv } from "./Drivers/CodexDriver.ts";
+import { CommandCodeDriver, type CommandCodeDriverEnv } from "./Drivers/CommandCodeDriver.ts";
 import { CursorDriver, type CursorDriverEnv } from "./Drivers/CursorDriver.ts";
 import { GrokDriver, type GrokDriverEnv } from "./Drivers/GrokDriver.ts";
+import { MuseDriver, type MuseDriverEnv } from "./Drivers/MuseDriver.ts";
 import { OpenCodeDriver, type OpenCodeDriverEnv } from "./Drivers/OpenCodeDriver.ts";
 import { AntigravityDriver, type AntigravityDriverEnv } from "./Drivers/AntigravityDriver.ts";
 import type { AnyProviderDriver } from "./ProviderDriver.ts";
@@ -36,8 +38,10 @@ import type { AnyProviderDriver } from "./ProviderDriver.ts";
 export type BuiltInDriversEnv =
   | ClaudeDriverEnv
   | CodexDriverEnv
+  | CommandCodeDriverEnv
   | CursorDriverEnv
   | GrokDriverEnv
+  | MuseDriverEnv
   | OpenCodeDriverEnv
   | AntigravityDriverEnv;
 
@@ -53,4 +57,6 @@ export const BUILT_IN_DRIVERS: ReadonlyArray<AnyProviderDriver<BuiltInDriversEnv
   GrokDriver,
   OpenCodeDriver,
   AntigravityDriver,
+  MuseDriver,
+  CommandCodeDriver,
 ];
