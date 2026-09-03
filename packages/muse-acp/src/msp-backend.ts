@@ -102,18 +102,16 @@ function parseQuestion(value: unknown): MuseUserInputQuestion {
     const option = record(entry, "Muse userInput option");
     return { ...option, label: stringField(option, "label", "Muse userInput option") };
   });
+  const minSelections = optionalNonNegativeInteger(selection["minSelections"]);
+  const maxSelections = optionalNonNegativeInteger(selection["maxSelections"]);
   return {
     id: stringField(question, "id", "Muse userInput question"),
     header: stringField(question, "header", "Muse userInput question"),
     question: stringField(question, "question", "Muse userInput question"),
     selection: {
       mode,
-      ...(optionalNonNegativeInteger(selection["minSelections"]) === undefined
-        ? {}
-        : { minSelections: optionalNonNegativeInteger(selection["minSelections"]) }),
-      ...(optionalNonNegativeInteger(selection["maxSelections"]) === undefined
-        ? {}
-        : { maxSelections: optionalNonNegativeInteger(selection["maxSelections"]) }),
+      ...(minSelections === undefined ? {} : { minSelections }),
+      ...(maxSelections === undefined ? {} : { maxSelections }),
     },
     options,
   };
