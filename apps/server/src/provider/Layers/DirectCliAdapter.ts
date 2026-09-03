@@ -224,13 +224,6 @@ export const makeDirectCliAdapter = Effect.fn("makeDirectCliAdapter")(function* 
           issue: "Direct CLI turns require a non-empty text prompt.",
         });
       }
-      if ((turnInput.attachments?.length ?? 0) > 0) {
-        return yield* new ProviderAdapterValidationError({
-          provider: input.provider,
-          operation: "sendTurn",
-          issue: "Direct CLI attachments are not supported by this adapter yet.",
-        });
-      }
 
       const turnId = yield* nextTurnId;
       const itemId = yield* nextItemId;
@@ -419,21 +412,6 @@ export const makeDirectCliAdapter = Effect.fn("makeDirectCliAdapter")(function* 
           });
         }
 
-        yield* emit({
-          type: "turn.completed",
-          eventId: yield* nextEventId,
-          provider: input.provider,
-          providerInstanceId: input.instanceId,
-          threadId: turnInput.threadId,
-          createdAt: yield* nowIso,
-          turnId,
-          payload: {
-            state: interrupted ? "interrupted" : succeeded ? "completed" : "failed",
-            ...(finalResult?.stopReason ? { stopReason: finalResult.stopReason } : {}),
-            ...(!succeeded && !interrupted ? { errorMessage: failureMessage } : {}),
-          },
-        });
-
         state.turns = [
           ...state.turns,
           {
@@ -451,6 +429,21 @@ export const makeDirectCliAdapter = Effect.fn("makeDirectCliAdapter")(function* 
           ...(state.providerSessionId ? { resumeCursor: { sessionId: state.providerSessionId } } : {}),
           updatedAt: yield* nowIso,
         };
+
+        yield* emit({
+          type: "turn.completed",
+          eventId: yield* nextEventId,
+          provider: input.provider,
+          providerInstanceId: input.instanceId,
+          threadId: turnInput.threadId,
+          createdAt: yield* nowIso,
+          turnId,
+          payload: {
+            state: interrupted ? "interrupted" : succeeded ? "completed" : "failed",
+            ...(finalResult?.stopReason ? { stopReason: finalResult.stopReason } : {}),
+            ...(!succeeded && !interrupted ? { errorMessage: failureMessage } : {}),
+          },
+        });
       }).pipe(
         Effect.catch((cause) =>
           Effect.gen(function* () {
