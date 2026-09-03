@@ -17,6 +17,12 @@ import type {
   MuseItemLike,
   MuseOutcomeLike,
 } from "./translation.js";
+import {
+  acpElicitationToMuseCommand,
+  type AcpElicitationResponse,
+  type MuseUserInputQuestion,
+  type MuseUserInputRequest,
+} from "./user-input.js";
 
 export interface MspTurnPort {
   readonly turnId: string;
@@ -41,8 +47,17 @@ export interface MspClientPort {
   close(): Promise<void>;
 }
 
+export interface MspServerRequest {
+  readonly method: string;
+  readonly params?: unknown;
+}
+
 export interface MspConnectionPort {
   command(method: string, params: Record<string, unknown>): Promise<unknown>;
+  onServerRequest?(
+    handler: (request: MspServerRequest) => Promise<Record<string, unknown>>,
+  ): void;
+  flush?(): Promise<void>;
 }
 
 export interface MspRuntime {
@@ -51,6 +66,75 @@ export interface MspRuntime {
 }
 
 export type MspRuntimeFactory = () => Promise<MspRuntime>;
+export type MuseUserInputHandler = (
+  request: MuseUserInputRequest,
+) => Promise<AcpElicitationResponse>;
+
+function record(value: unknown, label: string): Record<string, unknown> {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`${label} must be an object`);
+  }
+  return value as Record<string, unknown>;
+}
+
+function stringField(value: Record<string, unknown>, key: string, label: string): string {
+  const result = value[key];
+  if (typeof result !== "string" || result.length === 0) {
+    throw new Error(`${label}.${key} must be a non-empty string`);
+  }
+  return result;
+}
+
+function optionalNonNegativeInteger(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : undefined;
+}
+
+function parseQuestion(value: unknown): MuseUserInputQuestion {
+  const question = record(value, "Muse userInput question");
+  const selection = record(question["selection"], "Muse userInput selection");
+  const mode = selection["mode"];
+  if (mode !== "single" && mode !== "multiple") {
+    throw new Error(`unsupported Muse user-input selection mode: ${String(mode)}`);
+  }
+  const rawOptions = question["options"];
+  if (!Array.isArray(rawOptions)) throw new Error("Muse user-input options must be an array");
+  const options = rawOptions.map((entry) => {
+    const option = record(entry, "Muse userInput option");
+    return { ...option, label: stringField(option, "label", "Muse userInput option") };
+  });
+  return {
+    id: stringField(question, "id", "Muse userInput question"),
+    header: stringField(question, "header", "Muse userInput question"),
+    question: stringField(question, "question", "Muse userInput question"),
+    selection: {
+      mode,
+      ...(optionalNonNegativeInteger(selection["minSelections"]) === undefined
+        ? {}
+        : { minSelections: optionalNonNegativeInteger(selection["minSelections"]) }),
+      ...(optionalNonNegativeInteger(selection["maxSelections"]) === undefined
+        ? {}
+        : { maxSelections: optionalNonNegativeInteger(selection["maxSelections"]) }),
+    },
+    options,
+  };
+}
+
+function parseUserInputRequest(params: unknown): MuseUserInputRequest {
+  const input = record(params, "Muse userInput/request params");
+  const rawQuestions = input["questions"];
+  if (!Array.isArray(rawQuestions)) {
+    throw new Error("Muse userInput/request questions must be an array");
+  }
+  const autoResolutionMs = optionalNonNegativeInteger(input["autoResolutionMs"]);
+  return {
+    sessionId: stringField(input, "sessionId", "Muse userInput/request"),
+    userInputId: stringField(input, "userInputId", "Muse userInput/request"),
+    turnId: stringField(input, "turnId", "Muse userInput/request"),
+    itemId: stringField(input, "itemId", "Muse userInput/request"),
+    questions: rawQuestions.map(parseQuestion),
+    ...(autoResolutionMs === undefined ? {} : { autoResolutionMs }),
+  };
+}
 
 function adaptOutcome(outcome: TurnOutcome): MuseOutcomeLike {
   switch (outcome.kind) {
@@ -134,6 +218,8 @@ export async function spawnOfficialMspRuntime(): Promise<MspRuntime> {
 
   const connection: MspConnectionPort = {
     command: (method, params) => spawned.connection.command(method, params),
+    onServerRequest: (handler) => spawned.connection.onServerRequest(handler),
+    flush: () => spawned.connection.flush(),
   };
 
   return { client, connection };
@@ -166,9 +252,15 @@ class BackendSession implements MuseBackendSession {
 export class MspBackend implements MuseBackend {
   readonly #factory: MspRuntimeFactory;
   #runtimePromise: Promise<MspRuntime> | null = null;
+  #userInputHandler: MuseUserInputHandler | null = null;
+  readonly #background = new Set<Promise<void>>();
 
   constructor(factory: MspRuntimeFactory = spawnOfficialMspRuntime) {
     this.#factory = factory;
+  }
+
+  onUserInput(handler: MuseUserInputHandler): void {
+    this.#userInputHandler = handler;
   }
 
   async startSession(workspaceRoot: string): Promise<MuseBackendSession> {
@@ -189,16 +281,52 @@ export class MspBackend implements MuseBackend {
   }
 
   async close(): Promise<void> {
+    const pending = [...this.#background];
+    if (pending.length > 0) await Promise.allSettled(pending);
     const runtime = this.#runtimePromise === null ? null : await this.#runtimePromise;
     if (runtime !== null) await runtime.client.close();
     this.#runtimePromise = null;
   }
 
-  #runtime(): Promise<MspRuntime> {
-    this.#runtimePromise ??= this.#factory().catch((error) => {
-      this.#runtimePromise = null;
-      throw error;
+  #installServerRequests(runtime: MspRuntime): void {
+    runtime.connection.onServerRequest?.(async (request) => {
+      if (request.method !== "userInput/request") {
+        throw new Error(`unhandled server request: ${request.method}`);
+      }
+      const handler = this.#userInputHandler;
+      if (handler === null) {
+        throw new Error("Muse requested user input but no ACP elicitation handler is registered");
+      }
+
+      const input = parseUserInputRequest(request.params);
+      const response = await handler(input);
+      const command = acpElicitationToMuseCommand(input, response);
+
+      // Muse requires the JSON-RPC reply to userInput/request to be written
+      // before userInput/answer or userInput/cancel. Meta's conformance recipe
+      // uses this same one-microtask-late ordering plus Connection.flush().
+      queueMicrotask(() => {
+        const pending = (runtime.connection.flush?.() ?? Promise.resolve())
+          .then(() => runtime.connection.command(command.method, command.params))
+          .then(() => undefined);
+        this.#background.add(pending);
+        void pending.finally(() => this.#background.delete(pending));
+      });
+
+      return {};
     });
+  }
+
+  #runtime(): Promise<MspRuntime> {
+    this.#runtimePromise ??= this.#factory()
+      .then((runtime) => {
+        this.#installServerRequests(runtime);
+        return runtime;
+      })
+      .catch((error) => {
+        this.#runtimePromise = null;
+        throw error;
+      });
     return this.#runtimePromise;
   }
 }
