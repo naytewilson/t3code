@@ -50,7 +50,7 @@ it.layer(NodeServices.layer)("direct CLI process adapter", (it) => {
         const eventsFiber = yield* adapter.streamEvents.pipe(
           Stream.take(5),
           Stream.runCollect,
-          Effect.forkScoped,
+          Effect.forkScoped({ startImmediately: true }),
         );
         const turn = yield* adapter.sendTurn({
           threadId,
