@@ -20,13 +20,15 @@ function fakeTurn(turnId = "turn-1"): MspTurnPort {
 }
 
 class FakeSession implements MspSessionPort {
+  readonly sessionId: string;
+  readonly turn: MspTurnPort;
   approvalHandler: ((request: Record<string, unknown>) => Promise<{ choiceId: string }>) | undefined;
   sent: Array<Record<string, unknown>> = [];
 
-  constructor(
-    readonly sessionId: string,
-    readonly turn = fakeTurn(),
-  ) {}
+  constructor(sessionId: string, turn = fakeTurn()) {
+    this.sessionId = sessionId;
+    this.turn = turn;
+  }
 
   onApproval(handler: (request: Record<string, unknown>) => Promise<{ choiceId: string }>): void {
     this.approvalHandler = handler;
@@ -42,8 +44,11 @@ class FakeClient implements MspClientPort {
   starts: Array<Record<string, unknown>> = [];
   resumes: Array<Record<string, unknown>> = [];
   closed = false;
+  readonly session: FakeSession;
 
-  constructor(readonly session: FakeSession) {}
+  constructor(session: FakeSession) {
+    this.session = session;
+  }
 
   async startSession(input: Record<string, unknown>): Promise<MspSessionPort> {
     this.starts.push(input);
