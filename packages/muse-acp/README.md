@@ -86,18 +86,33 @@ presentation decision, not a loss in the Muse bridge.
 
 ## Paseo
 
-No Paseo source patch is required. Add a **custom ACP provider** that launches the same compiled
-adapter, for example conceptually:
+No Paseo source patch is required. Paseo's current custom-provider contract accepts any ACP-over-stdio
+agent with `extends: "acp"`; `command` is one argv array whose first element is the executable and whose
+remaining elements are arguments. Add the same compiled adapter under `agents.providers`, for example:
 
 ```json
 {
-  "command": "node",
-  "args": ["/ABSOLUTE/PATH/TO/t3code/packages/muse-acp/dist/index.js"]
+  "agents": {
+    "providers": {
+      "muse": {
+        "extends": "acp",
+        "label": "Muse Code",
+        "command": [
+          "/ABSOLUTE/PATH/TO/node",
+          "/ABSOLUTE/PATH/TO/t3code/packages/muse-acp/dist/index.js"
+        ],
+        "env": {
+          "MUSE_BIN": "/ABSOLUTE/PATH/TO/muse"
+        }
+      }
+    }
+  }
 }
 ```
 
-If the Paseo daemon cannot resolve `muse` from its PATH, provide `MUSE_BIN` in the custom provider's
-environment using the absolute official Muse binary path.
+`MUSE_BIN` is optional when the Paseo daemon can already resolve the official `muse` binary from its
+PATH. Absolute paths are recommended for both Node and Muse because Paseo executes argv directly rather
+than through an interactive shell.
 
 Both T3 and Paseo may point at the same adapter executable. Each ACP process owns its own MSP host
 connection; Muse's native session ID is what provides continuation/resume identity.
