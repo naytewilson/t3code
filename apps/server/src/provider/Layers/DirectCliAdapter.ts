@@ -26,6 +26,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import {
   ProviderAdapterProcessError,
+  ProviderAdapterRequestError,
   ProviderAdapterSessionNotFoundError,
   ProviderAdapterValidationError,
   type ProviderAdapterError,
@@ -59,7 +60,6 @@ export interface DirectCliTurnArgsInput {
 interface DirectCliSessionState {
   session: ProviderSession;
   providerSessionId: string | undefined;
-  readonly snapshot: ProviderThreadSnapshot;
   turns: Array<{ readonly id: TurnId; readonly items: ReadonlyArray<unknown> }>;
   activeChild: ChildProcessSpawner.ChildProcessHandle | undefined;
   activeTurnId: TurnId | undefined;
@@ -106,9 +106,20 @@ export const makeDirectCliAdapter = Effect.fn("makeDirectCliAdapter")(function* 
   const sessions = new Map<ThreadId, DirectCliSessionState>();
 
   const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
-  const nextEventId = crypto.randomUUIDv4.pipe(Effect.map(EventId.make));
-  const nextTurnId = crypto.randomUUIDv4.pipe(Effect.map(TurnId.make));
-  const nextItemId = crypto.randomUUIDv4.pipe(Effect.map(RuntimeItemId.make));
+  const randomUUIDv4 = crypto.randomUUIDv4.pipe(
+    Effect.mapError(
+      (cause) =>
+        new ProviderAdapterRequestError({
+          provider: input.provider,
+          method: "crypto/randomUUIDv4",
+          detail: "Failed to generate direct CLI runtime identifier.",
+          cause,
+        }),
+    ),
+  );
+  const nextEventId = randomUUIDv4.pipe(Effect.map(EventId.make));
+  const nextTurnId = randomUUIDv4.pipe(Effect.map(TurnId.make));
+  const nextItemId = randomUUIDv4.pipe(Effect.map(RuntimeItemId.make));
 
   const emit = (event: ProviderRuntimeEvent) => PubSub.publish(events, event).pipe(Effect.asVoid);
 
@@ -118,6 +129,23 @@ export const makeDirectCliAdapter = Effect.fn("makeDirectCliAdapter")(function* 
         provider: input.provider,
         threadId: String(threadId),
       }),
+    );
+
+  const mapProcessFailure = <A, E, R>(
+    threadId: ThreadId,
+    detail: string,
+    effect: Effect.Effect<A, E, R>,
+  ): Effect.Effect<A, ProviderAdapterProcessError, R> =>
+    effect.pipe(
+      Effect.mapError(
+        (cause) =>
+          new ProviderAdapterProcessError({
+            provider: input.provider,
+            threadId: String(threadId),
+            detail,
+            cause,
+          }),
+      ),
     );
 
   const updateProviderSessionId = (
@@ -152,7 +180,8 @@ export const makeDirectCliAdapter = Effect.fn("makeDirectCliAdapter")(function* 
       const resumedSessionId = parseResumeSessionId(startInput.resumeCursor);
       const providerSessionId =
         resumedSessionId ??
-        (input.sessionIdMode === "required-before-first-turn" ? yield* crypto.randomUUIDv4 : undefined);
+        (input.sessionIdMode === "required-before-first-turn" ? yield* randomUUIDv4 : undefined);
+      const model = selectedModel(startInput.modelSelection);
       const session: ProviderSession = {
         provider: input.provider,
         providerInstanceId: input.instanceId,
@@ -160,19 +189,15 @@ export const makeDirectCliAdapter = Effect.fn("makeDirectCliAdapter")(function* 
         runtimeMode: startInput.runtimeMode,
         threadId: startInput.threadId,
         ...(startInput.cwd ? { cwd: startInput.cwd } : {}),
-        ...(selectedModel(startInput.modelSelection)
-          ? { model: selectedModel(startInput.modelSelection) }
-          : {}),
+        ...(model ? { model } : {}),
         ...(providerSessionId ? { resumeCursor: { sessionId: providerSessionId } } : {}),
         createdAt,
         updatedAt: createdAt,
       };
-      const turns: Array<{ readonly id: TurnId; readonly items: ReadonlyArray<unknown> }> = [];
       sessions.set(startInput.threadId, {
         session,
         providerSessionId,
-        snapshot: { threadId: startInput.threadId, turns },
-        turns,
+        turns: [],
         activeChild: undefined,
         activeTurnId: undefined,
         interrupted: false,
@@ -191,7 +216,8 @@ export const makeDirectCliAdapter = Effect.fn("makeDirectCliAdapter")(function* 
           issue: `A turn is already running for thread ${turnInput.threadId}.`,
         });
       }
-      if (!turnInput.input?.trim()) {
+      const prompt = turnInput.input?.trim();
+      if (!prompt) {
         return yield* new ProviderAdapterValidationError({
           provider: input.provider,
           operation: "sendTurn",
@@ -213,7 +239,7 @@ export const makeDirectCliAdapter = Effect.fn("makeDirectCliAdapter")(function* 
       const reasoningEffort = selectedEffort(turnInput.modelSelection);
       const interactionMode = turnInput.interactionMode ?? "default";
       const args = input.buildArgs({
-        prompt: turnInput.input.trim(),
+        prompt,
         ...(state.providerSessionId ? { sessionId: state.providerSessionId } : {}),
         ...(model ? { model } : {}),
         ...(reasoningEffort ? { reasoningEffort } : {}),
@@ -223,8 +249,10 @@ export const makeDirectCliAdapter = Effect.fn("makeDirectCliAdapter")(function* 
       const resolved = yield* resolveSpawnCommand(input.binaryPath, args, {
         env: input.environment,
       });
-      const child = yield* spawner
-        .spawn(
+      const child = yield* mapProcessFailure(
+        turnInput.threadId,
+        `Failed to start '${input.binaryPath}'.`,
+        spawner.spawn(
           ChildProcess.make(resolved.command, resolved.args, {
             ...(state.session.cwd ? { cwd: state.session.cwd } : {}),
             env: input.environment,
@@ -233,18 +261,8 @@ export const makeDirectCliAdapter = Effect.fn("makeDirectCliAdapter")(function* 
             stdout: "pipe",
             stderr: "pipe",
           }),
-        )
-        .pipe(
-          Effect.mapError(
-            (cause) =>
-              new ProviderAdapterProcessError({
-                provider: input.provider,
-                threadId: String(turnInput.threadId),
-                detail: `Failed to start '${input.binaryPath}'.`,
-                cause,
-              }),
-          ),
-        );
+        ),
+      );
 
       state.activeChild = child;
       state.activeTurnId = turnId;
@@ -308,27 +326,40 @@ export const makeDirectCliAdapter = Effect.fn("makeDirectCliAdapter")(function* 
           yield* updateProviderSessionId(state, reportedSessionId, parsed.sessionId);
         });
 
-      const stdoutEffect = child.stdout.pipe(
-        Stream.decodeText,
-        Stream.splitLines,
-        Stream.runForEach((line) => handleParsedLine(input.parseStdoutLine(line))),
-      );
-      const stderrEffect = child.stderr.pipe(
-        Stream.decodeText,
-        Stream.splitLines,
-        Stream.runForEach((line) =>
-          Effect.gen(function* () {
-            const trimmed = line.trim();
-            if (trimmed && stderrLines.length < 40) stderrLines.push(trimmed);
-            const sessionId = input.parseSessionLine?.(line);
-            yield* updateProviderSessionId(state, reportedSessionId, sessionId);
-          }),
+      const stdoutEffect = mapProcessFailure(
+        turnInput.threadId,
+        "Failed while reading direct CLI stdout.",
+        child.stdout.pipe(
+          Stream.decodeText,
+          Stream.splitLines,
+          Stream.runForEach((line) => handleParsedLine(input.parseStdoutLine(line))),
         ),
+      );
+      const stderrEffect = mapProcessFailure(
+        turnInput.threadId,
+        "Failed while reading direct CLI stderr.",
+        child.stderr.pipe(
+          Stream.decodeText,
+          Stream.splitLines,
+          Stream.runForEach((line) =>
+            Effect.gen(function* () {
+              const trimmed = line.trim();
+              if (trimmed && stderrLines.length < 40) stderrLines.push(trimmed);
+              const sessionId = input.parseSessionLine?.(line);
+              yield* updateProviderSessionId(state, reportedSessionId, sessionId);
+            }),
+          ),
+        ),
+      );
+      const exitCodeEffect = mapProcessFailure(
+        turnInput.threadId,
+        "Failed while waiting for direct CLI process exit.",
+        child.exitCode.pipe(Effect.map(Number)),
       );
 
       const worker = Effect.gen(function* () {
         const [, , exitCode] = yield* Effect.all(
-          [stdoutEffect, stderrEffect, child.exitCode.pipe(Effect.map(Number))],
+          [stdoutEffect, stderrEffect, exitCodeEffect],
           { concurrency: "unbounded" },
         );
         yield* updateProviderSessionId(state, reportedSessionId, finalResult?.sessionId);
@@ -406,7 +437,7 @@ export const makeDirectCliAdapter = Effect.fn("makeDirectCliAdapter")(function* 
           {
             id: turnId,
             items: [
-              { type: "userMessage", content: [{ type: "text", text: turnInput.input }] },
+              { type: "userMessage", content: [{ type: "text", text: prompt }] },
               ...(assistantText ? [{ type: "agentMessage", text: assistantText }] : []),
             ],
           },
@@ -419,19 +450,29 @@ export const makeDirectCliAdapter = Effect.fn("makeDirectCliAdapter")(function* 
           updatedAt: yield* nowIso,
         };
       }).pipe(
-        Effect.catchAll((cause) =>
-          emit({
-            type: "runtime.error",
-            eventId: EventId.make(`direct-cli:${input.provider}:${turnId}:worker-error`),
-            provider: input.provider,
-            providerInstanceId: input.instanceId,
-            threadId: turnInput.threadId,
-            createdAt: new Date().toISOString(),
-            turnId,
-            payload: {
-              message: `Direct CLI stream failed: ${String(cause)}`,
-              class: "transport_error",
-            },
+        Effect.catch((cause) =>
+          Effect.gen(function* () {
+            const message = `Direct CLI stream failed: ${String(cause)}`;
+            state.session = {
+              ...state.session,
+              status: "error",
+              activeTurnId: undefined,
+              lastError: message,
+              updatedAt: yield* nowIso,
+            };
+            yield* emit({
+              type: "runtime.error",
+              eventId: EventId.make(`direct-cli:${input.provider}:${turnId}:worker-error`),
+              provider: input.provider,
+              providerInstanceId: input.instanceId,
+              threadId: turnInput.threadId,
+              createdAt: yield* nowIso,
+              turnId,
+              payload: {
+                message,
+                class: "transport_error",
+              },
+            });
           }),
         ),
         Effect.ensuring(
@@ -474,16 +515,10 @@ export const makeDirectCliAdapter = Effect.fn("makeDirectCliAdapter")(function* 
       }
       state.interrupted = true;
       if (state.activeChild) {
-        yield* state.activeChild.kill({ killSignal: "SIGINT", forceKillAfter: "2 seconds" }).pipe(
-          Effect.mapError(
-            (cause) =>
-              new ProviderAdapterProcessError({
-                provider: input.provider,
-                threadId: String(threadId),
-                detail: "Failed to interrupt direct CLI process.",
-                cause,
-              }),
-          ),
+        yield* mapProcessFailure(
+          threadId,
+          "Failed to interrupt direct CLI process.",
+          state.activeChild.kill({ killSignal: "SIGINT", forceKillAfter: "2 seconds" }),
         );
       }
     });
@@ -512,7 +547,7 @@ export const makeDirectCliAdapter = Effect.fn("makeDirectCliAdapter")(function* 
   const readThread: ProviderAdapterShape<ProviderAdapterError>["readThread"] = (threadId) => {
     const state = sessions.get(threadId);
     return state
-      ? Effect.succeed({ threadId, turns: state.turns })
+      ? Effect.succeed({ threadId, turns: state.turns } satisfies ProviderThreadSnapshot)
       : missingSession(threadId);
   };
 
@@ -522,7 +557,9 @@ export const makeDirectCliAdapter = Effect.fn("makeDirectCliAdapter")(function* 
   ) => {
     const state = sessions.get(threadId);
     if (!state) return missingSession(threadId);
-    if (numTurns === 0) return Effect.succeed({ threadId, turns: state.turns });
+    if (numTurns === 0) {
+      return Effect.succeed({ threadId, turns: state.turns } satisfies ProviderThreadSnapshot);
+    }
     return Effect.fail(
       new ProviderAdapterValidationError({
         provider: input.provider,

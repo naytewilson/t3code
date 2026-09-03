@@ -8,6 +8,7 @@ import {
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
@@ -82,7 +83,7 @@ export function makeDirectCliServerProvider(input: {
 }): ServerProviderShape {
   const probe = Effect.gen(function* () {
     const checkedAt = DateTime.formatIso(yield* DateTime.now);
-    const result = yield* Effect.gen(function* () {
+    const probeResult = yield* Effect.gen(function* () {
       const resolved = yield* resolveSpawnCommand(input.binaryPath, ["--version"], {
         env: input.environment,
       });
@@ -94,36 +95,35 @@ export function makeDirectCliServerProvider(input: {
           stdin: "ignore",
         }),
       ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, input.spawner));
-    }).pipe(
-      Effect.map((commandResult) => ({
-        installed: true,
-        version: parseGenericCliVersion(`${commandResult.stdout}\n${commandResult.stderr}`),
-        status: commandResult.code === 0 ? ("ready" as const) : ("warning" as const),
-        auth: { status: "unknown" as const },
-        ...(commandResult.code === 0
-          ? {}
-          : { message: `Version probe exited with code ${commandResult.code}.` }),
-      })),
-      Effect.catchAll((cause) =>
-        Effect.succeed(
-          isCommandMissingCause(cause)
-            ? {
-                installed: false,
-                version: null,
-                status: "error" as const,
-                auth: { status: "unknown" as const },
-                message: `${input.presentationName} CLI was not found at '${input.binaryPath}'.`,
-              }
-            : {
-                installed: true,
-                version: null,
-                status: "warning" as const,
-                auth: { status: "unknown" as const },
-                message: `Could not probe ${input.presentationName}: ${String(cause)}`,
-              },
-        ),
-      ),
-    );
+    }).pipe(Effect.result);
+
+    const probe = Result.isFailure(probeResult)
+      ? isCommandMissingCause(probeResult.failure)
+        ? {
+            installed: false,
+            version: null,
+            status: "error" as const,
+            auth: { status: "unknown" as const },
+            message: `${input.presentationName} CLI was not found at '${input.binaryPath}'.`,
+          }
+        : {
+            installed: true,
+            version: null,
+            status: "warning" as const,
+            auth: { status: "unknown" as const },
+            message: `Could not probe ${input.presentationName}: ${String(probeResult.failure)}`,
+          }
+      : {
+          installed: true,
+          version: parseGenericCliVersion(
+            `${probeResult.success.stdout}\n${probeResult.success.stderr}`,
+          ),
+          status: probeResult.success.code === 0 ? ("ready" as const) : ("warning" as const),
+          auth: { status: "unknown" as const },
+          ...(probeResult.success.code === 0
+            ? {}
+            : { message: `Version probe exited with code ${probeResult.success.code}.` }),
+        };
 
     const defaultModel = {
       slug: "default",
@@ -143,7 +143,7 @@ export function makeDirectCliServerProvider(input: {
         input.customModels,
         input.modelCapabilities,
       ),
-      probe: result,
+      probe,
     });
     const snapshot = withInstanceIdentity({
       instanceId: input.instanceId,
