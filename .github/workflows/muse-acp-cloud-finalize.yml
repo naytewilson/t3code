@@ -1,0 +1,133 @@
+name: Temporary Muse ACP cloud finalize
+
+on:
+  push:
+    branches:
+      - forge/muse-code-msp-provider
+
+permissions:
+  contents: write
+
+jobs:
+  finalize:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Checkout isolated Muse branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24.13.1
+
+      - name: Enable exact pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@11.10.0 --activate
+
+      - name: Merge current upstream T3
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git remote add upstream https://github.com/pingdotgg/t3code.git 2>/dev/null || true
+          git fetch --no-tags upstream main
+          upstream_sha=$(git rev-parse upstream/main)
+          echo "INITIAL_UPSTREAM_T3=$upstream_sha" >> "$GITHUB_ENV"
+          echo "Merging upstream T3 $upstream_sha"
+          git merge --no-ff --no-edit upstream/main
+          git diff --check
+
+      - name: Freeze the permanent bridge gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          node <<'NODE'
+          const fs = require('node:fs');
+          const path = '.github/workflows/muse-acp-bridge-ci.yml';
+          let source = fs.readFileSync(path, 'utf8');
+          source = source.replace(
+            'run: pnpm install --no-frozen-lockfile',
+            'run: pnpm install --frozen-lockfile',
+          );
+          if (!source.includes('name: T3 server typecheck')) {
+            source = source.replace(
+              '      - name: Generic ACP regression gate\n',
+              '      - name: T3 server typecheck\n        run: pnpm --filter ./apps/server typecheck\n      - name: Generic ACP regression gate\n',
+            );
+          }
+          if (!source.includes('name: effect-acp regression gate')) {
+            source +=
+              '      - name: effect-acp regression gate\n' +
+              '        working-directory: packages/effect-acp\n' +
+              '        run: pnpm exec vp test run src\n';
+          }
+          fs.writeFileSync(path, source);
+          NODE
+          git diff --check
+
+      - name: Generate exact workspace lockfile
+        run: pnpm install --lockfile-only --no-frozen-lockfile
+
+      - name: Install from generated lockfile
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify Muse ACP package
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm --filter @nayte/muse-acp test
+          pnpm --filter @nayte/muse-acp typecheck
+          pnpm --filter @nayte/muse-acp build
+          pnpm --filter @nayte/muse-acp smoke
+
+      - name: Verify current T3 server and ACP stack
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm --filter ./apps/server typecheck
+          (cd apps/server && pnpm exec vp test run src/provider/acp src/provider/Drivers/AcpDriver.ts)
+          (cd packages/effect-acp && pnpm exec vp test run src)
+
+      - name: Recheck upstream freshness and rerun if it moved
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags upstream main
+          latest=$(git rev-parse upstream/main)
+          echo "FINAL_UPSTREAM_T3=$latest" >> "$GITHUB_ENV"
+          if git merge-base --is-ancestor "$latest" HEAD; then
+            echo "Upstream remained covered at $latest"
+            exit 0
+          fi
+
+          echo "Upstream moved during verification: merging $latest and rerunning the full gate"
+          git merge --no-ff --no-edit "$latest"
+          pnpm install --lockfile-only --no-frozen-lockfile
+          pnpm install --frozen-lockfile
+          pnpm --filter @nayte/muse-acp test
+          pnpm --filter @nayte/muse-acp typecheck
+          pnpm --filter @nayte/muse-acp build
+          pnpm --filter @nayte/muse-acp smoke
+          pnpm --filter ./apps/server typecheck
+          (cd apps/server && pnpm exec vp test run src/provider/acp src/provider/Drivers/AcpDriver.ts)
+          (cd packages/effect-acp && pnpm exec vp test run src)
+          git diff --check
+
+      - name: Publish only the verified cloud closure
+        shell: bash
+        run: |
+          set -euo pipefail
+          git rm .github/workflows/muse-acp-cloud-finalize.yml
+          git add -A
+          git status --short
+          if ! git diff --cached --quiet; then
+            git commit -m 'chore(muse-acp): freeze cloud integration on current T3'
+          fi
+          git push origin HEAD:forge/muse-code-msp-provider
+          echo "PUBLISHED_HEAD=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
