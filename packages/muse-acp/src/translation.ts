@@ -1,6 +1,7 @@
 export interface PromptBlockLike {
   readonly type: string;
   readonly text?: string;
+  readonly [key: string]: unknown;
 }
 
 export interface MuseDeltaLike {
@@ -37,8 +38,7 @@ export type MuseOutcomeLike =
       readonly params?: { readonly terminal?: string };
     }
   | { readonly kind: "unqueued" }
-  | { readonly kind: "terminalUnknown" }
-  | { readonly kind: string };
+  | { readonly kind: "terminalUnknown" };
 
 export type AcpStopReason = "end_turn" | "cancelled";
 
@@ -191,8 +191,6 @@ export function approvalChoicesToAcpOptions(
 
 export function museOutcomeToAcpStopReason(outcome: MuseOutcomeLike): AcpStopReason {
   if (outcome.kind === "unqueued" || outcome.kind === "terminalUnknown") return "cancelled";
-  if (outcome.kind !== "completed") return "cancelled";
-
   const terminal = outcome.terminal ?? outcome.params?.terminal;
   return terminal === "cancelled" ? "cancelled" : "end_turn";
 }
