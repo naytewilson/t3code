@@ -29,14 +29,16 @@ class FakeClient implements AcpClientPort {
 }
 
 class FakeSession implements MuseBackendSession {
+  readonly sessionId: string;
+  readonly turn: MuseBackendTurn;
   approvalHandler:
     | ((request: Record<string, unknown>) => Promise<{ choiceId: string }>)
     | undefined;
 
-  constructor(
-    readonly sessionId: string,
-    readonly turn: MuseBackendTurn,
-  ) {}
+  constructor(sessionId: string, turn: MuseBackendTurn) {
+    this.sessionId = sessionId;
+    this.turn = turn;
+  }
 
   onApproval(handler: (request: Record<string, unknown>) => Promise<{ choiceId: string }>): void {
     this.approvalHandler = handler;
@@ -52,8 +54,11 @@ class FakeBackend implements MuseBackend {
   readonly starts: string[] = [];
   readonly resumes: string[] = [];
   readonly cancels: Array<{ sessionId: string; turnId: string }> = [];
+  readonly session: FakeSession;
 
-  constructor(readonly session: FakeSession) {}
+  constructor(session: FakeSession) {
+    this.session = session;
+  }
 
   async startSession(workspaceRoot: string): Promise<MuseBackendSession> {
     this.starts.push(workspaceRoot);
