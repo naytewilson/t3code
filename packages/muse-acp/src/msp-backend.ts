@@ -297,16 +297,20 @@ export class MspBackend implements MuseBackend {
       }
 
       const input = parseUserInputRequest(request.params);
-      const response = await handler(input);
-      const command = acpElicitationToMuseCommand(input, response);
 
-      // Muse requires the JSON-RPC reply to userInput/request to be written
-      // before userInput/answer or userInput/cancel. Meta's conformance recipe
-      // uses this same one-microtask-late ordering plus Connection.flush().
-      queueMicrotask(() => {
-        const pending = (runtime.connection.flush?.() ?? Promise.resolve())
-          .then(() => runtime.connection.command(command.method, command.params))
-          .then(() => undefined);
+      // MSP userInput/request is an acknowledgement of presentation, not the
+      // eventual human choice. Return it immediately, then wait for ACP
+      // elicitation off the request handler so Muse is never blocked on a
+      // potentially minutes-long human response. setImmediate deliberately
+      // yields past the JSON-RPC response write before we flush and issue the
+      // follow-up userInput/answer or userInput/cancel command.
+      setImmediate(() => {
+        const pending = handler(input)
+          .then((response) => acpElicitationToMuseCommand(input, response))
+          .then(async (command) => {
+            await (runtime.connection.flush?.() ?? Promise.resolve());
+            await runtime.connection.command(command.method, command.params);
+          });
         this.#background.add(pending);
         void pending.finally(() => this.#background.delete(pending));
       });
