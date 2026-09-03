@@ -119,11 +119,15 @@ describe("live Muse user-input routing", () => {
     );
   });
 
-  it("acks userInput/request before flushing and issuing native userInput/answer", async () => {
+  it("acks userInput/request before waiting for the human, then sends the native answer", async () => {
     const connection = new ConnectionForBackend();
     const runtime: MspRuntime = { client: new ClientForBackend(), connection };
     const backend = new MspBackend(async () => runtime);
-    backend.onUserInput(async () => ({ action: "accept", content: { target: "B" } }));
+    let resolveHuman!: (value: AcpElicitationResponse) => void;
+    const humanResponse = new Promise<AcpElicitationResponse>((resolve) => {
+      resolveHuman = resolve;
+    });
+    backend.onUserInput(() => humanResponse);
 
     // Force runtime initialization and server-request registration.
     await backend.cancel("session-unused", "turn-unused");
@@ -132,10 +136,14 @@ describe("live Muse user-input routing", () => {
 
     const handler = connection.serverRequestHandler;
     expect(handler).toBeTypeOf("function");
-    const ack = await handler?.({ method: "userInput/request", params: request });
-    expect(ack).toEqual({});
+    const ackPromise = handler?.({ method: "userInput/request", params: request });
+    await expect(ackPromise).resolves.toEqual({});
+
+    // The MSP request reply means "the UI is showing the question". It must
+    // not wait minutes for the human answer, and no native answer may exist yet.
     expect(connection.commands).toEqual([]);
 
+    resolveHuman({ action: "accept", content: { target: "B" } });
     await new Promise<void>((resolve) => setImmediate(resolve));
     expect(connection.events).toEqual(["flush", "command:userInput/answer"]);
     expect(connection.commands).toEqual([
