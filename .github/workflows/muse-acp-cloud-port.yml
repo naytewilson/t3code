@@ -1,0 +1,87 @@
+name: Temporary Muse ACP cloud port
+
+on:
+  push:
+    branches:
+      - forge/muse-code-msp-provider
+
+permissions:
+  contents: write
+
+jobs:
+  port-and-verify:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout current isolated Muse branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24.13.1
+
+      - name: Enable pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@11.10.0 --activate
+
+      - name: Apply authoritative upstream generic-ACP PR diff
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsSL https://github.com/pingdotgg/t3code/pull/9242.diff -o /tmp/acp.diff
+          grep '^diff --git ' /tmp/acp.diff | sed 's#diff --git a/##; s# b/.*##' > /tmp/acp-files.txt
+          echo '=== authoritative PR files ==='
+          cat /tmp/acp-files.txt
+
+          set +e
+          git apply --reject --whitespace=nowarn /tmp/acp.diff
+          apply_status=$?
+          set -e
+
+          if find . -name '*.rej' -print -quit | grep -q .; then
+            echo '=== rejected hunks ===' >&2
+            while IFS= read -r reject; do
+              echo "--- $reject" >&2
+              cat "$reject" >&2
+            done < <(find . -name '*.rej' -print | sort)
+            exit 21
+          fi
+          if [[ $apply_status -ne 0 ]]; then
+            echo "git apply exited $apply_status without a .rej file" >&2
+            exit "$apply_status"
+          fi
+
+          echo '=== resulting patch ==='
+          git status --short
+          git diff --check
+
+      - name: Install exact T3 dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck server
+        run: pnpm --filter ./apps/server typecheck
+
+      - name: Run ACP and driver tests
+        working-directory: apps/server
+        run: pnpm exec vp test run src/provider/acp src/provider/Layers/CursorAdapter.test.ts src/provider/Drivers
+
+      - name: Run effect-acp tests
+        working-directory: packages/effect-acp
+        run: pnpm exec vp test run src
+
+      - name: Remove temporary workflow and publish verified port
+        shell: bash
+        run: |
+          set -euo pipefail
+          git rm .github/workflows/muse-acp-cloud-port.yml
+          find . -name '*.orig' -delete
+          git add -A
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'feat(provider): port generic ACP stack onto current T3'
+          git push origin HEAD:forge/muse-code-msp-provider
