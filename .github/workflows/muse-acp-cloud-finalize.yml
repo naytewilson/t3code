@@ -43,34 +43,6 @@ jobs:
           git merge --no-ff --no-edit upstream/main
           git diff --check
 
-      - name: Freeze the permanent bridge gate
-        shell: bash
-        run: |
-          set -euo pipefail
-          node <<'NODE'
-          const fs = require('node:fs');
-          const path = '.github/workflows/muse-acp-bridge-ci.yml';
-          let source = fs.readFileSync(path, 'utf8');
-          source = source.replace(
-            'run: pnpm install --no-frozen-lockfile',
-            'run: pnpm install --frozen-lockfile',
-          );
-          if (!source.includes('name: T3 server typecheck')) {
-            source = source.replace(
-              '      - name: Generic ACP regression gate\n',
-              '      - name: T3 server typecheck\n        run: pnpm --filter ./apps/server typecheck\n      - name: Generic ACP regression gate\n',
-            );
-          }
-          if (!source.includes('name: effect-acp regression gate')) {
-            source +=
-              '      - name: effect-acp regression gate\n' +
-              '        working-directory: packages/effect-acp\n' +
-              '        run: pnpm exec vp test run src\n';
-          }
-          fs.writeFileSync(path, source);
-          NODE
-          git diff --check
-
       - name: Generate exact workspace lockfile
         run: pnpm install --lockfile-only --no-frozen-lockfile
 
@@ -119,15 +91,14 @@ jobs:
           (cd packages/effect-acp && pnpm exec vp test run src)
           git diff --check
 
-      - name: Publish only the verified cloud closure
+      - name: Publish verified merge and lockfile only
         shell: bash
         run: |
           set -euo pipefail
-          git rm .github/workflows/muse-acp-cloud-finalize.yml
-          git add -A
+          git add pnpm-lock.yaml
           git status --short
           if ! git diff --cached --quiet; then
-            git commit -m 'chore(muse-acp): freeze cloud integration on current T3'
+            git commit -m 'chore(muse-acp): freeze lockfile on current T3'
           fi
           git push origin HEAD:forge/muse-code-msp-provider
           echo "PUBLISHED_HEAD=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
