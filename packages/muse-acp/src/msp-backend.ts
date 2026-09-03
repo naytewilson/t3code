@@ -7,16 +7,9 @@ import {
   type TurnOutcome,
 } from "@muse-code/sdk";
 
-import type {
-  MuseBackend,
-  MuseBackendSession,
-  MuseBackendTurn,
-} from "./agent.js";
-import type {
-  MuseDeltaLike,
-  MuseItemLike,
-  MuseOutcomeLike,
-} from "./translation.js";
+import type { MuseBackend, MuseBackendSession, MuseBackendTurn } from "./agent.js";
+import type { MuseDeltaLike, MuseItemLike, MuseOutcomeLike } from "./translation.js";
+import type { EffortTier } from "./effort.js";
 import {
   acpElicitationToMuseCommand,
   type AcpElicitationResponse,
@@ -54,9 +47,7 @@ export interface MspServerRequest {
 
 export interface MspConnectionPort {
   command(method: string, params: Record<string, unknown>): Promise<unknown>;
-  onServerRequest?(
-    handler: (request: MspServerRequest) => Promise<Record<string, unknown>>,
-  ): void;
+  onServerRequest?(handler: (request: MspServerRequest) => Promise<Record<string, unknown>>): void;
   flush?(): Promise<void>;
 }
 
@@ -192,7 +183,7 @@ export async function spawnOfficialMspRuntime(): Promise<MspRuntime> {
   let spawned;
   try {
     spawned = await handshake.initialize({
-      clientInfo: { name: "muse-acp", version: "0.1.0" },
+      clientInfo: { name: "muse_acp", version: "0.1.0" },
     });
   } catch (error) {
     await handshake.close().catch(() => undefined);
@@ -240,9 +231,10 @@ class BackendSession implements MuseBackendSession {
     this.#session.onApproval(handler);
   }
 
-  async sendText(text: string): Promise<MuseBackendTurn> {
+  async sendText(text: string, reasoningEffort?: EffortTier): Promise<MuseBackendTurn> {
     return await this.#session.sendUserTurn({
       input: [{ type: "text", text }],
+      ...(reasoningEffort === undefined ? {} : { reasoningEffort }),
     });
   }
 }

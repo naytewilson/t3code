@@ -10,11 +10,7 @@ import {
   type Stream,
 } from "@agentclientprotocol/sdk";
 
-import {
-  MuseAcpAgent,
-  type AcpClientPort,
-  type MuseBackend,
-} from "./agent.js";
+import { MuseAcpAgent, type AcpClientPort, type MuseBackend } from "./agent.js";
 import { MspBackend } from "./msp-backend.js";
 import type { PromptBlockLike } from "./translation.js";
 
@@ -88,11 +84,18 @@ export function createMuseAcpApp(backend: MuseBackend = new MspBackend()): Agent
       return await requireBridge(bridge).newSession({ cwd: context.params.cwd });
     })
     .onRequest(methods.agent.session.load, async (context) => {
-      await requireBridge(bridge).loadSession({
+      return await requireBridge(bridge).loadSession({
         sessionId: context.params.sessionId,
         cwd: context.params.cwd,
       });
-      return {};
+    })
+    .onRequest(methods.agent.session.setConfigOption, async (context) => {
+      const params = context.params as {
+        sessionId: string;
+        configId: string;
+        value: unknown;
+      };
+      return await requireBridge(bridge).setSessionConfig(params);
     })
     .onRequest(methods.agent.session.prompt, async (context) => {
       return await requireBridge(bridge).prompt({

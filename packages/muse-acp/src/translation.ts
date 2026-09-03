@@ -174,11 +174,20 @@ export function approvalChoicesToAcpOptions(
   choices: ReadonlyArray<MuseApprovalChoiceLike>,
 ): Array<{ optionId: string; name: string; kind: "allow_once" | "allow_always" | "reject_once" }> {
   return choices.map((choice) => {
-    if (choice.decision === "approved") {
+    if (
+      choice.decision === "approved" ||
+      choice.decision === "approvedForSession" ||
+      choice.decision === "approvedPolicyAmendment"
+    ) {
       return {
         optionId: choice.choiceId,
         name: choice.label,
-        kind: choice.scope === "session" ? "allow_always" : "allow_once",
+        kind:
+          choice.decision === "approvedForSession" ||
+          choice.decision === "approvedPolicyAmendment" ||
+          choice.scope === "session"
+            ? "allow_always"
+            : "allow_once",
       };
     }
     return {

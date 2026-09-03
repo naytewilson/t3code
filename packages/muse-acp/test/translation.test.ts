@@ -121,6 +121,30 @@ describe("Muse MSP -> ACP translation", () => {
     ]);
   });
 
+  it("maps session and policy-amendment approvals to durable allow options", () => {
+    expect(
+      approvalChoicesToAcpOptions([
+        {
+          choiceId: "allow_session",
+          decision: "approvedForSession",
+          label: "Allow session",
+          scope: "session",
+        },
+        {
+          choiceId: "allow_prefix",
+          decision: "approvedPolicyAmendment",
+          label: "Always allow here",
+          scope: "workspace",
+        },
+        { choiceId: "abort", decision: "abort", label: "Reject", scope: "once" },
+      ]),
+    ).toEqual([
+      { optionId: "allow_session", name: "Allow session", kind: "allow_always" },
+      { optionId: "allow_prefix", name: "Always allow here", kind: "allow_always" },
+      { optionId: "abort", name: "Reject", kind: "reject_once" },
+    ]);
+  });
+
   it("maps Muse terminals to ACP stop reasons without inventing success", () => {
     expect(museOutcomeToAcpStopReason({ kind: "completed", terminal: "completed" })).toBe(
       "end_turn",

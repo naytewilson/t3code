@@ -11,6 +11,15 @@ import {
   type PromptBlockLike,
 } from "./translation.js";
 import {
+  EFFORT_CONFIG_ID,
+  EFFORT_DEFAULT,
+  effortConfigOption,
+  parseEffortValue,
+  toReasoningTier,
+  type EffortTier,
+} from "./effort.js";
+import type { SessionConfigOption } from "@agentclientprotocol/sdk";
+import {
   museUserInputToAcpElicitation,
   type AcpElicitationResponse,
   type MuseUserInputRequest,
@@ -34,7 +43,7 @@ export interface MuseBackendSession {
   onApproval(
     handler: (request: Record<string, unknown>) => Promise<{ readonly choiceId: string }>,
   ): void;
-  sendText(text: string): Promise<MuseBackendTurn>;
+  sendText(text: string, reasoningEffort?: EffortTier): Promise<MuseBackendTurn>;
 }
 
 export interface MuseBackend {
@@ -42,9 +51,7 @@ export interface MuseBackend {
   resumeSession(sessionId: string): Promise<MuseBackendSession>;
   cancel(sessionId: string, turnId: string): Promise<void>;
   close(): Promise<void>;
-  onUserInput?(
-    handler: (request: MuseUserInputRequest) => Promise<AcpElicitationResponse>,
-  ): void;
+  onUserInput?(handler: (request: MuseUserInputRequest) => Promise<AcpElicitationResponse>): void;
 }
 
 export interface AcpNewSessionInput {
@@ -68,6 +75,7 @@ export interface AcpCancelInput {
 interface SessionState {
   readonly session: MuseBackendSession;
   activeTurnId: string | null;
+  effort: string;
 }
 
 function object(value: unknown): Record<string, unknown> | null {
@@ -139,21 +147,39 @@ export class MuseAcpAgent {
     this.#backend.onUserInput?.((request) => this.#userInput(request));
   }
 
-  async newSession(input: AcpNewSessionInput): Promise<{ readonly sessionId: string }> {
+  async newSession(
+    input: AcpNewSessionInput,
+  ): Promise<{ readonly sessionId: string; readonly configOptions: SessionConfigOption[] }> {
     const session = await this.#backend.startSession(input.cwd);
-    this.#register(session);
-    return { sessionId: session.sessionId };
+    const state = this.#register(session);
+    return { sessionId: session.sessionId, configOptions: [effortConfigOption(state.effort)] };
   }
 
-  async loadSession(input: AcpLoadSessionInput): Promise<Record<string, never>> {
+  async loadSession(
+    input: AcpLoadSessionInput,
+  ): Promise<{ readonly configOptions: SessionConfigOption[] }> {
     const session = await this.#backend.resumeSession(input.sessionId);
     if (session.sessionId !== input.sessionId) {
       throw new Error(
         `Muse resumed session ${session.sessionId}, expected exact session ${input.sessionId}`,
       );
     }
-    this.#register(session);
-    return {};
+    const state = this.#register(session);
+    return { configOptions: [effortConfigOption(state.effort)] };
+  }
+
+  async setSessionConfig(input: {
+    readonly sessionId: string;
+    readonly configId: string;
+    readonly value: unknown;
+  }): Promise<{ readonly configOptions: SessionConfigOption[] }> {
+    const state = this.#sessions.get(input.sessionId);
+    if (state === undefined) throw new Error(`Unknown Muse session: ${input.sessionId}`);
+    if (input.configId !== EFFORT_CONFIG_ID) {
+      throw new Error(`Unknown Muse config option: ${input.configId}`);
+    }
+    state.effort = parseEffortValue(input.value);
+    return { configOptions: [effortConfigOption(state.effort)] };
   }
 
   async prompt(input: AcpPromptInput): Promise<{ readonly stopReason: "end_turn" | "cancelled" }> {
@@ -163,7 +189,7 @@ export class MuseAcpAgent {
     const text = promptBlocksToText(input.prompt);
     if (text.length === 0) throw new Error("Muse prompt contained no text input");
 
-    const turn = await state.session.sendText(text);
+    const turn = await state.session.sendText(text, toReasoningTier(state.effort));
     state.activeTurnId = turn.turnId;
 
     try {
@@ -193,10 +219,11 @@ export class MuseAcpAgent {
     return parseElicitationResponse(response);
   }
 
-  #register(session: MuseBackendSession): void {
-    const state: SessionState = { session, activeTurnId: null };
+  #register(session: MuseBackendSession): SessionState {
+    const state: SessionState = { session, activeTurnId: null, effort: EFFORT_DEFAULT };
     this.#sessions.set(session.sessionId, state);
     session.onApproval((request) => this.#approval(session.sessionId, request));
+    return state;
   }
 
   async #approval(
