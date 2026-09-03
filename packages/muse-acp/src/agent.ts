@@ -10,10 +10,16 @@ import {
   type MuseOutcomeLike,
   type PromptBlockLike,
 } from "./translation.js";
+import {
+  museUserInputToAcpElicitation,
+  type AcpElicitationResponse,
+  type MuseUserInputRequest,
+} from "./user-input.js";
 
 export interface AcpClientPort {
   sessionUpdate(payload: Record<string, unknown>): Promise<void>;
   requestPermission(payload: Record<string, unknown>): Promise<Record<string, unknown>>;
+  createElicitation?(payload: Record<string, unknown>): Promise<Record<string, unknown>>;
 }
 
 export interface MuseBackendTurn {
@@ -36,6 +42,9 @@ export interface MuseBackend {
   resumeSession(sessionId: string): Promise<MuseBackendSession>;
   cancel(sessionId: string, turnId: string): Promise<void>;
   close(): Promise<void>;
+  onUserInput?(
+    handler: (request: MuseUserInputRequest) => Promise<AcpElicitationResponse>,
+  ): void;
 }
 
 export interface AcpNewSessionInput {
@@ -96,6 +105,17 @@ function selectedOptionId(response: Record<string, unknown>): string | null {
   return typeof optionId === "string" ? optionId : null;
 }
 
+function parseElicitationResponse(response: Record<string, unknown>): AcpElicitationResponse {
+  const action = response["action"];
+  if (action === "decline" || action === "cancel") return { action };
+  if (action === "accept") {
+    const content = object(response["content"]);
+    if (content === null) throw new Error("ACP accepted Muse user input without form content");
+    return { action: "accept", content };
+  }
+  throw new Error(`ACP returned an unsupported elicitation action: ${String(action)}`);
+}
+
 function approvalToolTitle(request: Record<string, unknown>): string {
   const tool = request["tool"];
   return typeof tool === "string" && tool.length > 0 ? tool : "Muse approval";
@@ -116,6 +136,7 @@ export class MuseAcpAgent {
   constructor(client: AcpClientPort, backend: MuseBackend) {
     this.#client = client;
     this.#backend = backend;
+    this.#backend.onUserInput?.((request) => this.#userInput(request));
   }
 
   async newSession(input: AcpNewSessionInput): Promise<{ readonly sessionId: string }> {
@@ -162,6 +183,14 @@ export class MuseAcpAgent {
 
   async close(): Promise<void> {
     await this.#backend.close();
+  }
+
+  async #userInput(request: MuseUserInputRequest): Promise<AcpElicitationResponse> {
+    if (this.#client.createElicitation === undefined) {
+      throw new Error("ACP client does not support elicitation for Muse user input");
+    }
+    const response = await this.#client.createElicitation(museUserInputToAcpElicitation(request));
+    return parseElicitationResponse(response);
   }
 
   #register(session: MuseBackendSession): void {
