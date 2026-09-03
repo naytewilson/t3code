@@ -33,6 +33,7 @@ jobs:
           vp test run
           apps/server/src/provider/Layers/MuseAdapter.test.ts
           apps/server/src/provider/Layers/CommandCodeAdapter.test.ts
+          apps/server/src/provider/Layers/DirectCliAdapter.process.test.ts
           apps/server/src/provider/builtInDrivers.test.ts
 
       - name: Contracts typecheck
