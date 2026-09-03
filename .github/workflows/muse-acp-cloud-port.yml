@@ -61,11 +61,8 @@ jobs:
             fi
           done
 
-          # Resolve only the three current-upstream overlaps observed above.
-          # Everything else is the authoritative #9242 patch applied directly.
           node <<'NODE'
           const fs = require('node:fs');
-
           function read(path) { return fs.readFileSync(path, 'utf8'); }
           function write(path, source) { fs.writeFileSync(path, source); }
           function replaceOnce(source, before, after, label) {
@@ -78,86 +75,42 @@ jobs:
           {
             const path = 'apps/server/src/provider/Layers/CursorAdapter.ts';
             let s = read(path);
-            s = replaceOnce(
-              s,
-              'const PROVIDER = ProviderDriverKind.make("cursor");',
-              'const CURSOR_PROVIDER = ProviderDriverKind.make("cursor");',
-              'Cursor provider constant',
-            );
-            s = replaceOnce(
-              s,
-              '    readonly environment?: NodeJS.ProcessEnv;\n  },',
-              '    readonly environment?: NodeJS.ProcessEnv;\n    readonly runtimeMode?: RuntimeMode;\n  },',
-              'ACP runtime factory environment field',
-            );
-            s = replaceOnce(
-              s,
-              '          let ctx!: CursorSessionContext;\n\n          const resumeSessionId = parseCursorResume(input.resumeCursor)?.sessionId;',
-              '          let ctx!: AcpSessionContext;\n\n          const resumeSessionId = hasCursorExtensions\n            ? parseCursorResume(input.resumeCursor)?.sessionId\n            : undefined;',
-              'Cursor session context/resume block',
-            );
-            const staleSettings = `
-          // Resolve the CursorSettings used to spawn the ACP child. Production
-          // leaves \`options.resolveSettings\` undefined so we use the value
-          // captured at adapter construction — per-instance isolation is
-          // enforced by the hydration layer rebuilding this adapter whenever
-          // its config changes. Tests set \`resolveSettings\` to pull the latest
-          // snapshot from \`ServerSettingsService\` so that mid-suite
-          // \`updateSettings({ providers: { cursor: { binaryPath } } })\` calls
-          // actually take effect when the next session spawns.
-          const effectiveCursorSettings = options?.resolveSettings
-            ? yield* options.resolveSettings
-            : cursorSettings;
-`;
+            s = replaceOnce(s, 'const PROVIDER = ProviderDriverKind.make("cursor");', 'const CURSOR_PROVIDER = ProviderDriverKind.make("cursor");', 'Cursor provider constant');
+            s = replaceOnce(s, '    readonly environment?: NodeJS.ProcessEnv;\n  },', '    readonly environment?: NodeJS.ProcessEnv;\n    readonly runtimeMode?: RuntimeMode;\n  },', 'ACP runtime factory environment field');
+            s = replaceOnce(s, '          let ctx!: CursorSessionContext;\n\n          const resumeSessionId = parseCursorResume(input.resumeCursor)?.sessionId;', '          let ctx!: AcpSessionContext;\n\n          const resumeSessionId = hasCursorExtensions\n            ? parseCursorResume(input.resumeCursor)?.sessionId\n            : undefined;', 'Cursor session context/resume block');
+            const staleSettings = [
+              '          // Resolve the CursorSettings used to spawn the ACP child. Production',
+              '          // leaves `options.resolveSettings` undefined so we use the value',
+              '          // captured at adapter construction — per-instance isolation is',
+              '          // enforced by the hydration layer rebuilding this adapter whenever',
+              '          // its config changes. Tests set `resolveSettings` to pull the latest',
+              '          // snapshot from `ServerSettingsService` so that mid-suite',
+              '          // `updateSettings({ providers: { cursor: { binaryPath } } })` calls',
+              '          // actually take effect when the next session spawns.',
+              '          const effectiveCursorSettings = options?.resolveSettings',
+              '            ? yield* options.resolveSettings',
+              '            : cursorSettings;',
+              '',
+            ].join('\n');
             s = replaceOnce(s, staleSettings, '', 'legacy Cursor settings block');
-            s = replaceOnce(
-              s,
-              '          const acp = yield* makeCursorAcpRuntime({\n            cursorSettings: effectiveCursorSettings,',
-              '          const acp = yield* makeRuntime({',
-              'Cursor runtime constructor',
-            );
-            s = replaceOnce(
-              s,
-              '            clientInfo: { name: "t3-code", version: "0.0.0" },\n            ...(mcpSession',
-              '            clientInfo: { name: "t3-code", version: "0.0.0" },\n            ...(profile.onConfigOptionsChanged\n              ? { onConfigOptionsChanged: profile.onConfigOptionsChanged }\n              : {}),\n            ...(profile.onAvailableCommandsChanged\n              ? { onAvailableCommandsChanged: profile.onAvailableCommandsChanged }\n              : {}),\n            ...(mcpSession',
-              'ACP runtime callbacks',
-            );
-            s = replaceOnce(
-              s,
-              '          if (input.attachments && input.attachments.length > 0) {\n            for (const attachment of input.attachments) {\n              // Cursor ingests images only. Generic files reach the agent',
-              '          if (ctx.supportsImages && input.attachments && input.attachments.length > 0) {\n            for (const attachment of input.attachments) {\n              // ACP embeds images only. Generic files reach the agent',
-              'ACP image capability gate',
-            );
+            s = replaceOnce(s, '          const acp = yield* makeCursorAcpRuntime({\n            cursorSettings: effectiveCursorSettings,', '          const acp = yield* makeRuntime({', 'Cursor runtime constructor');
+            s = replaceOnce(s, '            clientInfo: { name: "t3-code", version: "0.0.0" },\n            ...(mcpSession', '            clientInfo: { name: "t3-code", version: "0.0.0" },\n            ...(profile.onConfigOptionsChanged\n              ? { onConfigOptionsChanged: profile.onConfigOptionsChanged }\n              : {}),\n            ...(profile.onAvailableCommandsChanged\n              ? { onAvailableCommandsChanged: profile.onAvailableCommandsChanged }\n              : {}),\n            ...(mcpSession', 'ACP runtime callbacks');
+            s = replaceOnce(s, '          if (input.attachments && input.attachments.length > 0) {\n            for (const attachment of input.attachments) {\n              // Cursor ingests images only. Generic files reach the agent', '          if (ctx.supportsImages && input.attachments && input.attachments.length > 0) {\n            for (const attachment of input.attachments) {\n              // ACP embeds images only. Generic files reach the agent', 'ACP image capability gate');
             write(path, s);
           }
 
           {
             const path = 'apps/server/src/provider/Layers/ProviderRegistry.ts';
             let s = read(path);
-            s = replaceOnce(
-              s,
-              'const shouldRetainMissingProviderModels = (provider: ServerProvider): boolean => {\n  if (provider.driver !== ProviderDriverKind.make("opencode")) {',
-              'const shouldRetainMissingProviderModels = (provider: ServerProvider): boolean => {\n  if (provider.driver === ProviderDriverKind.make("acp")) {\n    return provider.enabled && provider.installed && provider.status !== "ready";\n  }\n  if (provider.driver !== ProviderDriverKind.make("opencode")) {',
-              'ACP provider model retention rule',
-            );
+            s = replaceOnce(s, 'const shouldRetainMissingProviderModels = (provider: ServerProvider): boolean => {\n  if (provider.driver !== ProviderDriverKind.make("opencode")) {', 'const shouldRetainMissingProviderModels = (provider: ServerProvider): boolean => {\n  if (provider.driver === ProviderDriverKind.make("acp")) {\n    return provider.enabled && provider.installed && provider.status !== "ready";\n  }\n  if (provider.driver !== ProviderDriverKind.make("opencode")) {', 'ACP provider model retention rule');
             write(path, s);
           }
 
           {
             const path = 'apps/web/src/components/chat/providerIconUtils.ts';
             let s = read(path);
-            s = replaceOnce(
-              s,
-              'import { ClaudeAI, CursorIcon, GrokIcon, Icon, OpenAI, OpenCodeIcon } from "../Icons";',
-              'import { ACPRegistryIcon, ClaudeAI, CursorIcon, GrokIcon, Icon, OpenAI, OpenCodeIcon } from "../Icons";',
-              'ACP icon import',
-            );
-            s = replaceOnce(
-              s,
-              'export const PROVIDER_ICON_BY_PROVIDER: Partial<Record<ProviderDriverKind, Icon>> = {\n  [ProviderDriverKind.make("codex")]: OpenAI,',
-              'export const PROVIDER_ICON_BY_PROVIDER: Partial<Record<ProviderDriverKind, Icon>> = {\n  [ProviderDriverKind.make("acp")]: ACPRegistryIcon,\n  [ProviderDriverKind.make("codex")]: OpenAI,',
-              'ACP icon map',
-            );
+            s = replaceOnce(s, 'import { ClaudeAI, CursorIcon, GrokIcon, Icon, OpenAI, OpenCodeIcon } from "../Icons";', 'import { ACPRegistryIcon, ClaudeAI, CursorIcon, GrokIcon, Icon, OpenAI, OpenCodeIcon } from "../Icons";', 'ACP icon import');
+            s = replaceOnce(s, 'export const PROVIDER_ICON_BY_PROVIDER: Partial<Record<ProviderDriverKind, Icon>> = {\n  [ProviderDriverKind.make("codex")]: OpenAI,', 'export const PROVIDER_ICON_BY_PROVIDER: Partial<Record<ProviderDriverKind, Icon>> = {\n  [ProviderDriverKind.make("acp")]: ACPRegistryIcon,\n  [ProviderDriverKind.make("codex")]: OpenAI,', 'ACP icon map');
             write(path, s);
           }
           NODE
@@ -168,10 +121,8 @@ jobs:
             echo 'Expected current-upstream overlap rejects, but git apply returned success.' >&2
             exit 22
           fi
-
-          echo '=== resulting patch ==='
-          git status --short
           git diff --check
+          git status --short
 
       - name: Install exact T3 dependencies
         run: pnpm install --frozen-lockfile
