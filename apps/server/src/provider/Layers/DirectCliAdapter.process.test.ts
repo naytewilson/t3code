@@ -24,9 +24,9 @@ it.layer(NodeServices.layer)("direct CLI process adapter", (it) => {
         const threadId = ThreadId.make("direct_cli_process_test");
         const sessionId = "fake-session-123";
         const script = [
-          `console.error(${JSON.stringify(`session: ${sessionId}`)})`,
-          `console.log(JSON.stringify({type:"event",event:{type:"text_delta",text:"hello from child"}}))`,
-          `console.log(JSON.stringify({type:"result",subtype:"success",sessionId:${JSON.stringify(sessionId)},stopReason:"end_turn"}))`,
+          `console.error("session: ${sessionId}")`,
+          `console.log('{"type":"event","event":{"type":"text_delta","text":"hello from child"}}')`,
+          `console.log('{"type":"result","subtype":"success","sessionId":"${sessionId}","stopReason":"end_turn"}')`,
         ].join(";");
 
         const adapter = yield* makeDirectCliAdapter({
