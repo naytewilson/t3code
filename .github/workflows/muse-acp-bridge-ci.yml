@@ -25,6 +25,8 @@ jobs:
         run: pnpm --filter @nayte/muse-acp typecheck
       - name: Bridge executable build
         run: pnpm --filter @nayte/muse-acp build
+      - name: Black-box ACP stdio smoke
+        run: pnpm --filter @nayte/muse-acp smoke
       - name: Generic ACP regression gate
         working-directory: apps/server
         run: pnpm exec vp test run src/provider/acp src/provider/Drivers/AcpDriver.ts
