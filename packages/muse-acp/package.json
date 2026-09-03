@@ -8,6 +8,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
+    "smoke": "node scripts/stdio-smoke.mjs",
     "typecheck": "tsgo --noEmit",
     "test": "vp test run"
   },
