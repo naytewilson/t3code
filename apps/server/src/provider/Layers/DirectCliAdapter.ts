@@ -252,16 +252,18 @@ export const makeDirectCliAdapter = Effect.fn("makeDirectCliAdapter")(function* 
       const child = yield* mapProcessFailure(
         turnInput.threadId,
         `Failed to start '${input.binaryPath}'.`,
-        spawner.spawn(
-          ChildProcess.make(resolved.command, resolved.args, {
-            ...(state.session.cwd ? { cwd: state.session.cwd } : {}),
-            env: input.environment,
-            shell: resolved.shell,
-            stdin: "ignore",
-            stdout: "pipe",
-            stderr: "pipe",
-          }),
-        ),
+        spawner
+          .spawn(
+            ChildProcess.make(resolved.command, resolved.args, {
+              ...(state.session.cwd ? { cwd: state.session.cwd } : {}),
+              env: input.environment,
+              shell: resolved.shell,
+              stdin: "ignore",
+              stdout: "pipe",
+              stderr: "pipe",
+            }),
+          )
+          .pipe(Scope.provide(scope)),
       );
 
       state.activeChild = child;
