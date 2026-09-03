@@ -5,7 +5,6 @@ import {
   type AcpClientPort,
   type MuseBackend,
   type MuseBackendSession,
-  type MuseBackendTurn,
 } from "../src/agent.js";
 import {
   MspBackend,
@@ -13,11 +12,11 @@ import {
   type MspConnectionPort,
   type MspRuntime,
   type MspSessionPort,
-  type MspTurnPort,
 } from "../src/msp-backend.js";
-import type { MuseUserInputRequest } from "../src/user-input.js";
-
-async function* empty<T>(): AsyncIterableIterator<T> {}
+import type {
+  AcpElicitationResponse,
+  MuseUserInputRequest,
+} from "../src/user-input.js";
 
 class AgentClient implements AcpClientPort {
   readonly elicitationRequests: Array<Record<string, unknown>> = [];
@@ -33,10 +32,12 @@ class AgentClient implements AcpClientPort {
 
 class BackendForAgent implements MuseBackend {
   userInputHandler:
-    | ((request: MuseUserInputRequest) => Promise<Record<string, unknown>>)
+    | ((request: MuseUserInputRequest) => Promise<AcpElicitationResponse>)
     | undefined;
 
-  onUserInput(handler: (request: MuseUserInputRequest) => Promise<Record<string, unknown>>): void {
+  onUserInput(
+    handler: (request: MuseUserInputRequest) => Promise<AcpElicitationResponse>,
+  ): void {
     this.userInputHandler = handler;
   }
 
