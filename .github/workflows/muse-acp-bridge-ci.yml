@@ -1,0 +1,30 @@
+name: Muse ACP bridge gate
+
+on:
+  push:
+    branches:
+      - forge/muse-code-msp-provider
+
+jobs:
+  bridge:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.13.1
+      - run: |
+          corepack enable
+          corepack prepare pnpm@11.10.0 --activate
+      - name: Install bridge dependencies
+        run: pnpm install --no-frozen-lockfile
+      - name: Bridge unit tests
+        run: pnpm --filter @nayte/muse-acp test
+      - name: Bridge typecheck
+        run: pnpm --filter @nayte/muse-acp typecheck
+      - name: Bridge executable build
+        run: pnpm --filter @nayte/muse-acp build
+      - name: Generic ACP regression gate
+        working-directory: apps/server
+        run: pnpm exec vp test run src/provider/acp src/provider/Drivers/AcpDriver.ts
