@@ -90,7 +90,7 @@ describe("Muse user input <-> ACP elicitation", () => {
         action: "accept",
         content: { target: "C", checks: ["Lint"] },
       }),
-    ).toThrow(/not offered/i);
+    ).toThrow(/not offer/i);
   });
 
   it("maps ACP decline/cancel to Muse userInput\/cancel instead of leaving the turn stuck", () => {
