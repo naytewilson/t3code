@@ -1,0 +1,23 @@
+{
+  "name": "@nayte/muse-acp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "muse-acp": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsgo --noEmit",
+    "test": "vp test run"
+  },
+  "dependencies": {
+    "@agentclientprotocol/sdk": "1.4.0",
+    "@muse-code/sdk": "0.1.1",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "vite-plus": "catalog:"
+  }
+}
