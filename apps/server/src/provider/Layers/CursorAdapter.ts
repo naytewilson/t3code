@@ -335,12 +335,14 @@ function applyRequestedSessionConfiguration<E>(input: {
     | undefined;
   readonly mapError: (context: {
     readonly cause: import("effect-acp/errors").AcpError;
-    readonly method: "session/set_config_option" | "session/set_mode";
+    readonly method: "session/set_config_option" | "session/set_mode" | "session/set_model";
   }) => E;
 }): Effect.Effect<string | undefined, E> {
   return Effect.gen(function* () {
     const mapConfigError = (cause: EffectAcpErrors.AcpError) =>
       input.mapError({ cause, method: "session/set_config_option" });
+    const mapModelError = (cause: EffectAcpErrors.AcpError) =>
+      input.mapError({ cause, method: "session/set_model" });
     let appliedModel: string | undefined;
     if (input.modelSelection && input.modelSelectionKind === "cursor") {
       yield* applyCursorAcpModelSelection({
@@ -373,6 +375,27 @@ function applyRequestedSessionConfiguration<E>(input: {
         appliedModel = input.modelSelection.model;
       } else if (input.modelSelection.model === "agent-default") {
         appliedModel = input.modelSelection.model;
+      } else {
+        // Not a config-option model: it may be a model advertised via
+        // SessionModelState (e.g. initialize `_meta.modelState`), which is applied
+        // through the `session/set_model` capability rather than a config option.
+        // Send it so the picker selection actually takes effect and appliedModel
+        // (session.model) reflects it -- otherwise the model is never applied and
+        // the reactor tears the session down every turn, treating the unapplied
+        // selection as a model change. Slugs are trimmed, so match on the trimmed
+        // modelId and send the raw one.
+        const modelState = yield* input.runtime.getModelState;
+        const sessionModel = modelState?.availableModels.find(
+          (candidate) => candidate.modelId.trim() === requestedModel,
+        );
+        if (modelState !== undefined && sessionModel !== undefined) {
+          if (modelState.currentModelId.trim() !== sessionModel.modelId.trim()) {
+            yield* input.runtime
+              .setSessionModel(sessionModel.modelId)
+              .pipe(Effect.mapError(mapModelError));
+          }
+          appliedModel = input.modelSelection.model;
+        }
       }
 
       for (const selection of input.modelSelection.options ?? []) {

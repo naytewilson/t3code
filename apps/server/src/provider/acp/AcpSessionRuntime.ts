@@ -208,6 +208,12 @@ export class AcpSessionRuntime extends Context.Service<
     readonly drainEvents: Effect.Effect<void>;
     /** Latest mode state observed from session setup and `session/update` notifications. */
     readonly getModeState: Effect.Effect<AcpSessionModeState | undefined>;
+    /**
+     * Latest model state (SessionModelState) observed from session setup, for agents
+     * that advertise selectable models via the `session/set_model` capability rather
+     * than a `category: "model"` config option. Undefined when the agent does not.
+     */
+    readonly getModelState: Effect.Effect<EffectAcpSchema.SessionModelState | undefined>;
     /** Latest configuration options observed from session setup, writes, and update notifications. */
     readonly getConfigOptions: Effect.Effect<ReadonlyArray<EffectAcpSchema.SessionConfigOption>>;
     /**
@@ -306,6 +312,7 @@ export const make = (
     const runtimeScope = yield* Scope.Scope;
     const eventQueue = yield* Queue.unbounded<AcpSessionRuntimeEvent>();
     const modeStateRef = yield* Ref.make<AcpSessionModeState | undefined>(undefined);
+    const modelStateRef = yield* Ref.make<EffectAcpSchema.SessionModelState | undefined>(undefined);
     const toolCallsRef = yield* Ref.make(new Map<string, AcpToolCallTrackedState>());
     const assistantItemRuntimeId = yield* crypto.randomUUIDv4.pipe(
       Effect.mapError(
@@ -730,6 +737,7 @@ export const make = (
       }
 
       yield* Ref.set(modeStateRef, parseSessionModeState(sessionSetupResult));
+      yield* Ref.set(modelStateRef, sessionSetupResult.models ?? undefined);
       yield* updateConfigOptions(sessionSetupResult);
 
       const nextState = {
@@ -815,6 +823,7 @@ export const make = (
         yield* Deferred.await(acknowledge);
       }),
       getModeState: Ref.get(modeStateRef),
+      getModelState: Ref.get(modelStateRef),
       getConfigOptions: Ref.get(configOptionsRef),
       prompt: (payload, promptOptions?) =>
         promptSerializationSemaphore.withPermit(
@@ -904,6 +913,14 @@ export const make = (
               "session/set_model",
               requestPayload,
               acp.agent.setSessionModel(requestPayload),
+            ).pipe(
+              // Reflect the applied model so getModelState (and the reactor's
+              // change detection) see the new current model.
+              Effect.tap(() =>
+                Ref.update(modelStateRef, (current) =>
+                  current ? { ...current, currentModelId: modelId } : current,
+                ),
+              ),
             );
           }),
         ),

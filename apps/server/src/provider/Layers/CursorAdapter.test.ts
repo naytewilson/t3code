@@ -244,6 +244,50 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
     }),
   );
 
+  it.effect("applies a SessionModelState model through session/set_model", () =>
+    Effect.gen(function* () {
+      const tempDir = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "standard-acp-session-model-")),
+      );
+      const requestLogPath = NodePath.join(tempDir, "requests.jsonl");
+      const adapter = yield* makeTestAcpAdapter({
+        ...process.env,
+        T3_ACP_REQUEST_LOG_PATH: requestLogPath,
+      });
+      const threadId = ThreadId.make("standard-acp-session-model-thread");
+
+      // `grok-mock-alt` is advertised only via SessionModelState, not as a
+      // `category: "model"` config option, so applying it must go through the
+      // session/set_model capability -- otherwise the selection is silently
+      // dropped and the reactor tears the session down every turn.
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("acp"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        modelSelection: createModelSelection(ProviderInstanceId.make("acp_test"), "grok-mock-alt"),
+      });
+      yield* adapter.stopSession(threadId);
+
+      const requests = yield* Effect.promise(() => readJsonLines(requestLogPath));
+      const setModelIds = requests.flatMap((request) =>
+        request.method === "session/set_model"
+          ? [(request.params as { modelId: string }).modelId]
+          : [],
+      );
+      assert.includeDeepMembers(setModelIds, ["grok-mock-alt"]);
+
+      // The session model must not be misrouted as a config-option write.
+      const modelConfigWrites = requests.flatMap((request) =>
+        request.method === "session/set_config_option" &&
+        (request.params as { configId: string }).configId === "model"
+          ? [(request.params as { value: unknown }).value]
+          : [],
+      );
+      assert.notInclude(modelConfigWrites, "grok-mock-alt");
+    }),
+  );
+
   it.effect("starts a session and maps mock ACP prompt flow to runtime events", () =>
     Effect.gen(function* () {
       const adapter = yield* CursorAdapter;
