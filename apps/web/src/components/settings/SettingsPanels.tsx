@@ -2513,7 +2513,10 @@ export function GeneralSettingsPanel() {
                         ...settings,
                         textGenerationModelSelection: createModelSelection(instanceId, model),
                       },
-                      serverProviders,
+                      // Filtered list (no ACP): the read path uses it too, and the
+                      // resolver's fallback would otherwise persist an ACP instance
+                      // as the text-gen model -- a driver with no server-side text gen.
+                      textGenerationProviders,
                     ),
                   });
                 }}
@@ -2546,7 +2549,7 @@ export function GeneralSettingsPanel() {
                           nextOptions,
                         ),
                       },
-                      serverProviders,
+                      textGenerationProviders,
                     ),
                   });
                 }}

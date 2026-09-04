@@ -590,7 +590,16 @@ export const make = (
       return initializeResult;
     });
 
-    const connect = yield* Effect.cached(connectOnce);
+    // Cache only a SUCCESSFUL handshake. `Effect.cached` memoizes the full Exit,
+    // so a failed `initialize` would be replayed forever to every later start()/
+    // initialize() call -- contradicting `start`'s contract, which resets to
+    // NotStarted on error so a caller can retry. Invalidate the memo on failure
+    // so a retry actually re-runs the handshake.
+    const [connectCached, invalidateConnect] = yield* Effect.cachedInvalidateWithTTL(
+      connectOnce,
+      Duration.infinity,
+    );
+    const connect = Effect.onError(connectCached, () => invalidateConnect);
 
     const startOnce = Effect.gen(function* () {
       const initializeResult = yield* connect;
@@ -614,11 +623,24 @@ export const make = (
         | EffectAcpSchema.ResumeSessionResponse;
       const agentCapabilities = initializeResult.agentCapabilities;
       const mcpCapabilities = agentCapabilities?.mcpCapabilities;
-      const mcpServers = (options.mcpServers ?? []).filter((server) => {
+      const requestedMcpServers = options.mcpServers ?? [];
+      const mcpServers = requestedMcpServers.filter((server) => {
         if ("type" in server && server.type === "http") return mcpCapabilities?.http === true;
         if ("type" in server && server.type === "sse") return mcpCapabilities?.sse === true;
         return true;
       });
+      // Dropping a server here silently strips T3's own `t3-code` MCP toolkit for
+      // any agent that accepts the transport without advertising the capability
+      // flag. Keep the strict gate, but say so rather than losing the tools quietly.
+      if (mcpServers.length < requestedMcpServers.length) {
+        const dropped = requestedMcpServers
+          .filter((server) => !mcpServers.includes(server))
+          .map((server) => ("name" in server ? server.name : "unknown"))
+          .join(", ");
+        yield* Effect.logWarning(
+          `Dropping MCP server(s) [${dropped}]: the agent did not advertise support for their transport`,
+        );
+      }
       if (options.resumeSessionId && agentCapabilities?.loadSession === true) {
         const loadPayload = {
           sessionId: options.resumeSessionId,

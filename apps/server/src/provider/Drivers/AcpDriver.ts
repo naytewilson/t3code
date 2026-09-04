@@ -96,10 +96,13 @@ function modelsFromInitialize(
  */
 function parseAdvertisedCommands(
   meta: { readonly [key: string]: unknown } | null | undefined,
-): ReadonlyArray<EffectAcpSchema.AvailableCommand> {
+): ReadonlyArray<EffectAcpSchema.AvailableCommand> | undefined {
   const advertised = meta?.availableCommands;
+  // Distinguish "not advertised" (undefined) from "advertised as empty" ([]): an
+  // explicit empty list withdraws previously observed commands, while an absent
+  // field must leave them untouched.
   if (!Array.isArray(advertised)) {
-    return [];
+    return undefined;
   }
   return advertised.flatMap((entry) => {
     if (typeof entry !== "object" || entry === null) {
@@ -266,7 +269,7 @@ export const AcpDriver: ProviderDriver<AcpSettings, AcpDriverEnv> = {
         // until the first message. Agents may also publish the list on the
         // initialize response, which the probe can read before any session.
         const advertisedCommands = parseAdvertisedCommands(connected.success._meta);
-        if (advertisedCommands.length > 0) {
+        if (advertisedCommands !== undefined) {
           yield* Ref.set(observedCommandsRef, advertisedCommands);
         }
         const observedOptions = yield* Ref.get(observedConfigRef);

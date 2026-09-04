@@ -280,7 +280,11 @@ function findModeByIdOrName(
 }
 
 function isPlanMode(mode: AcpSessionMode): boolean {
-  return findModeByAliases([mode], ACP_PLAN_MODE_ALIASES) !== undefined;
+  // Match plan modes by id/name only. A description-based match filters out valid
+  // working modes whose prose merely mentions planning -- e.g. an `agent` mode
+  // described "...plan and execute" would be dropped from workingModes below and
+  // never selected, leaving the agent stuck in its previous mode.
+  return findModeByIdOrName([mode], ACP_PLAN_MODE_ALIASES) !== undefined;
 }
 
 function resolveRequestedModeId(input: {
@@ -352,12 +356,19 @@ function applyRequestedSessionConfiguration<E>(input: {
       appliedModel = input.modelSelection.model;
     } else if (input.modelSelection && input.modelSelectionKind === "standard") {
       const modelConfig = findModelConfigOption(yield* input.runtime.getConfigOptions);
-      if (
-        modelConfig &&
-        collectSessionConfigOptionValues(modelConfig).includes(input.modelSelection.model)
-      ) {
+      // Displayed model slugs are trimmed (extractModelOptions), so validate the
+      // selection against trimmed values and send the matching raw value -- an
+      // untrimmed `includes` check silently drops a model whose config value
+      // carries surrounding whitespace.
+      const requestedModel = input.modelSelection.model;
+      const matchedModelValue = modelConfig
+        ? collectSessionConfigOptionValues(modelConfig).find(
+            (value) => value.trim() === requestedModel,
+          )
+        : undefined;
+      if (modelConfig !== undefined && matchedModelValue !== undefined) {
         yield* input.runtime
-          .setConfigOption(modelConfig.id, input.modelSelection.model)
+          .setConfigOption(modelConfig.id, matchedModelValue)
           .pipe(Effect.mapError(mapConfigError));
         appliedModel = input.modelSelection.model;
       } else if (input.modelSelection.model === "agent-default") {
@@ -372,7 +383,12 @@ function applyRequestedSessionConfiguration<E>(input: {
         if (
           !configOption ||
           configOption.category === "model" ||
-          configOption.category === "mode"
+          configOption.category === "mode" ||
+          // A stale/invalid select value would otherwise be forwarded and fail the
+          // whole turn with -32602; skip it silently, matching the model path above.
+          // Booleans are toggles (not enumerated values) and are left to the runtime.
+          (typeof selection.value === "string" &&
+            !collectSessionConfigOptionValues(configOption).includes(selection.value))
         ) {
           continue;
         }
@@ -869,8 +885,13 @@ export function makeAcpAdapter(profile: AcpAdapterProfile, options?: AcpAdapterO
             session,
             scope: sessionScope,
             acp,
+            // Embed images unless the agent explicitly declines them. Gating on
+            // `=== true` silently dropped images for agents that accept them without
+            // advertising the flag (a regression from the shared-core refactor --
+            // this adapter previously sent images unconditionally), and an
+            // image-only turn then failed as if it had no input.
             supportsImages:
-              started.initializeResult.agentCapabilities?.promptCapabilities?.image === true,
+              started.initializeResult.agentCapabilities?.promptCapabilities?.image !== false,
             notificationFiber: undefined,
             pendingApprovals,
             pendingUserInputs,
