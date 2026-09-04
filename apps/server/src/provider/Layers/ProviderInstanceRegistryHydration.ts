@@ -8,17 +8,15 @@
  *      registry expects. Keyed by `ProviderInstanceId`, values are
  *      `ProviderInstanceConfig` envelopes.
  *   2. `settings.providers.<kind>` — the legacy single-instance-per-driver
- *      fields (`providers.codex`, `providers.claudeAgent`, …). These are
- *      the source of truth for every deployment that hasn't been migrated
- *      yet to an explicit `providerInstances` entry.
+ *      fields (`providers.codex`, `providers.claudeAgent`, …). These remain
+ *      the source of truth for built-ins that have a legacy mirror.
  *
  * This module bridges (2) into (1) and wires the resulting map into a
  * mutable registry. For every built-in driver whose id is not already
  * present in `providerInstances` (keyed on
  * `defaultInstanceIdForDriver(driverKind)` — literally the driver kind as a
- * routing slug), we synthesize an envelope from the legacy field. The
- * registry decodes both flavours through the same `configSchema` and ends
- * up with one uniform `ProviderInstance` per entry.
+ * routing slug), we synthesize an envelope from the legacy field when one
+ * exists, otherwise from the driver's own default config.
  *
  * Explicit `providerInstances` entries always win — users can already
  * override the legacy `providers.<kind>` blob by authoring a
@@ -31,7 +29,7 @@
  *   1. Read the current `ServerSettings` once and use it to seed the
  *      registry's initial state via `ProviderInstanceRegistryMutableLayer`.
  *   2. Fork a daemon fiber (lifetime tied to the layer's scope) that
- *      subscribes to `ServerSettingsService.streamChanges` and calls
+ *      acquires `ServerSettingsService.subscribeChanges` and calls
  *      `ProviderInstanceRegistryMutator.reconcile` on every emission.
  *
  * Failures inside the watcher are logged and swallowed so a single bad
@@ -64,7 +62,8 @@ import { ProviderInstanceRegistryMutableLayer } from "./ProviderInstanceRegistry
  *   1. Copy all explicit `settings.providerInstances` entries verbatim.
  *   2. For each built-in driver whose `defaultInstanceIdForDriver(id)` key
  *      is *not* already in the explicit map, synthesize an entry from the
- *      matching legacy `settings.providers.<kind>` blob.
+ *      matching legacy `settings.providers.<kind>` blob when present, or
+ *      `driver.defaultConfig()` for newer built-ins without a legacy mirror.
  *
  * The returned map is the input the registry consumes; pure & exported
  * separately so the hydration logic can be exercised by unit tests
@@ -83,20 +82,15 @@ export const deriveProviderInstanceConfigMap = (
       continue;
     }
 
-    // Only built-in drivers have a legacy mirror; the registry's
-    // `providers` struct is keyed on the same literal slug as
-    // `driverKind`. Access is dynamic (the driver kind is a branded string),
-    // but it's constrained to `keyof settings.providers` by the union of
-    // built-in driver kinds.
+    // Existing built-ins have a legacy mirror keyed by driver kind. Newer
+    // built-ins may intentionally skip that legacy struct and own their blank
+    // configuration entirely through the driver SPI.
     const legacyKey = driver.driverKind as keyof ServerSettings["providers"];
     const legacyConfig = settings.providers[legacyKey];
-    if (legacyConfig === undefined) {
-      continue;
-    }
 
     merged[instanceId] = {
       driver: driver.driverKind,
-      config: legacyConfig,
+      config: legacyConfig ?? driver.defaultConfig(),
     };
   }
 
@@ -118,7 +112,8 @@ const SettingsWatcherLive = Layer.effectDiscard(
   Effect.gen(function* () {
     const mutator = yield* ProviderInstanceRegistryMutator;
     const serverSettings = yield* ServerSettingsService;
-    yield* serverSettings.streamChanges.pipe(
+    const settingsChanges = yield* serverSettings.subscribeChanges;
+    yield* settingsChanges.pipe(
       Stream.runForEach((next) =>
         mutator
           .reconcile(deriveProviderInstanceConfigMap(next))
@@ -141,8 +136,8 @@ const SettingsWatcherLive = Layer.effectDiscard(
  *   - `ProviderInstanceRegistryMutableLayer` produces the registry +
  *     mutator from the initial config map. Its scope owns every
  *     per-instance child scope created during reconcile.
- *   - `SettingsWatcherLive` consumes the mutator and runs a daemon fiber
- *     in the same scope.
+ *   - `SettingsWatcherLive` consumes the mutator, acquires its settings
+ *     subscription before forking, and runs a daemon fiber in the same scope.
  *
  * Composing via `Layer.provideMerge` makes the watcher's deps available
  * from the mutable layer while still surfacing the registry as an output.

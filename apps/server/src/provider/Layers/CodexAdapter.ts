@@ -8,6 +8,7 @@
  * @module CodexAdapterLive
  */
 import {
+  EventId,
   type CanonicalItemType,
   type CanonicalRequestType,
   type CodexSettings,
@@ -17,14 +18,20 @@ import {
   type ProviderRuntimeEvent,
   type ProviderRequestKind,
   type ThreadTokenUsageSnapshot,
+  type ToolActivityIcon,
+  type ToolActivityNativeAppReference,
+  type ToolActivitySource,
   type ProviderUserInputAnswers,
   RuntimeItemId,
   RuntimeRequestId,
+  RuntimeTaskId,
+  type RuntimeTaskUsage,
   ProviderApprovalDecision,
   ThreadId,
   ProviderSendTurnInput,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as NodeCrypto from "node:crypto";
 import * as Crypto from "effect/Crypto";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -55,6 +62,7 @@ import { ServerConfig } from "../../config.ts";
 import {
   CodexResumeCursorSchema,
   CodexSessionRuntimeThreadIdMissingError,
+  describeMcpElicitation,
   makeCodexSessionRuntime,
   type CodexSessionRuntimeError,
   type CodexSessionRuntimeOptions,
@@ -62,6 +70,7 @@ import {
 } from "./CodexSessionRuntime.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 import { resolveCodexLaunchArgs } from "./codexLaunchArgs.ts";
+import { codexRateLimitsToUpdate } from "./codexUsageLimits.ts";
 const isCodexAppServerProcessExitedError = Schema.is(CodexErrors.CodexAppServerProcessExitedError);
 const isCodexAppServerTransportError = Schema.is(CodexErrors.CodexAppServerTransportError);
 const isCodexSessionRuntimeThreadIdMissingError = Schema.is(
@@ -145,6 +154,236 @@ function readPayload<A>(
 function trimText(value: string | undefined | null): string | undefined {
   const trimmed = value?.trim();
   return trimmed && trimmed.length > 0 ? trimmed : undefined;
+}
+
+function asUnknownRecord(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" ? (value as Record<string, unknown>) : undefined;
+}
+
+function normalizeMcpIntentTitle(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const normalized = value.trim().replace(/\s+/gu, " ");
+  if (!normalized) return undefined;
+  const characters = Array.from(normalized);
+  return characters.length <= 80 ? normalized : `${characters.slice(0, 79).join("")}…`;
+}
+
+function normalizedHttpUrl(value: unknown): string | undefined {
+  if (typeof value !== "string" || value.length > 4096) return undefined;
+  try {
+    const url = new URL(value);
+    const href = url.href;
+    return (url.protocol === "http:" || url.protocol === "https:") && href.length <= 4096
+      ? href
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function normalizedImageUrl(value: unknown): string | undefined {
+  if (typeof value !== "string" || value.length > 4096) return undefined;
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:" || url.protocol === "data:"
+      ? url.href
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function normalizedAppId(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const appId = value.trim();
+  return appId.length > 0 && appId.length <= 512 && /^[A-Za-z0-9._-]+$/u.test(appId)
+    ? appId
+    : undefined;
+}
+
+function normalizedDisplayName(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const displayName = value.trim().replace(/\s+/gu, " ");
+  return displayName && displayName.length <= 160 ? displayName : undefined;
+}
+
+function normalizedSourceKeyPart(value: string): string {
+  return value.trim().toLowerCase();
+}
+
+function nativeAppSourceKey(appId: string): string {
+  const key = `native-app:${appId.toLowerCase()}`;
+  if (key.length <= 512) return key;
+  const digest = NodeCrypto.createHash("sha256").update(key).digest("hex");
+  return `${key.slice(0, 512 - digest.length - 1)}:${digest}`;
+}
+
+function browserDisplayName(value: unknown): string | undefined {
+  const normalized = normalizedDisplayName(value)?.toLowerCase();
+  if (!normalized) return undefined;
+  if (normalized.includes("chrome") || normalized === "chromium") return "Chrome";
+  if (normalized.includes("edge")) return "Microsoft Edge";
+  if (normalized.includes("firefox")) return "Firefox";
+  if (normalized.includes("safari")) return "Safari";
+  if (normalized.includes("arc")) return "Arc";
+  if (normalized === "iab" || normalized.includes("in-app")) return "Browser";
+  return normalizedDisplayName(value);
+}
+
+function browserNativeAppReference(name: string): ToolActivityNativeAppReference | undefined {
+  switch (name) {
+    case "Chrome":
+      return { _tag: "display-name", displayName: "Google Chrome" };
+    case "Microsoft Edge":
+    case "Firefox":
+    case "Safari":
+    case "Arc":
+      return { _tag: "display-name", displayName: name };
+    default:
+      return undefined;
+  }
+}
+
+function appDisplayNameFromId(appId: string): string | undefined {
+  const knownNames: Readonly<Record<string, string>> = {
+    "com.apple.finder": "Finder",
+    "com.apple.safari": "Safari",
+    "com.google.chrome": "Chrome",
+    "com.microsoft.edgemac": "Microsoft Edge",
+    "org.mozilla.firefox": "Firefox",
+    "company.thebrowser.browser": "Arc",
+  };
+  return knownNames[appId.toLowerCase()];
+}
+
+function nativeAppReference(value: unknown): ToolActivityNativeAppReference | undefined {
+  const app = asUnknownRecord(value);
+  if (app?.kind === "appId") {
+    const appId = normalizedAppId(app.appId);
+    return appId ? { _tag: "app-id", appId } : undefined;
+  }
+  if (app?.kind === "displayName") {
+    const displayName = normalizedDisplayName(app.displayName);
+    return displayName ? { _tag: "display-name", displayName } : undefined;
+  }
+  return undefined;
+}
+
+function themedLogoIcon(
+  ...records: ReadonlyArray<Record<string, unknown> | undefined>
+): ToolActivityIcon | undefined {
+  for (const record of records) {
+    const logoUrl = normalizedImageUrl(record?.logoUrl);
+    if (!logoUrl) continue;
+    const logoUrlDark = normalizedImageUrl(record?.logoUrlDark ?? record?.logoDarkUrl);
+    return {
+      _tag: "themed-logo",
+      logoUrl,
+      ...(logoUrlDark ? { logoUrlDark } : {}),
+    };
+  }
+  return undefined;
+}
+
+interface McpToolPresentation {
+  readonly toolSurface?: "browser" | "computer";
+  readonly toolIcon?: ToolActivityIcon;
+  readonly toolSource?: ToolActivitySource;
+}
+
+function mcpToolPresentation(
+  item: Extract<CodexLifecycleItem, { readonly type: "mcpToolCall" }>,
+): McpToolPresentation {
+  const result = asUnknownRecord(item.result);
+  const metadata = asUnknownRecord(result?._meta);
+  const surface = asUnknownRecord(metadata?.["codex/toolSurface"]);
+  const sourceMetadata = asUnknownRecord(metadata?.source);
+  const appContext = asUnknownRecord(item.appContext);
+  const sourceLogo = themedLogoIcon(surface, sourceMetadata, appContext);
+  if (surface?.kind === "browserUse") {
+    const screenshot = asUnknownRecord(surface.screenshot);
+    const browserUse = asUnknownRecord(metadata?.browser_use);
+    const openTabs = Array.isArray(surface.openTabs) ? surface.openTabs : [];
+    const latestOpenTab = openTabs
+      .toReversed()
+      .map(asUnknownRecord)
+      .find((tab) => normalizedHttpUrl(tab?.url) !== undefined);
+    const selectedPage = [
+      { record: screenshot, url: screenshot?.pageUrl },
+      { record: browserUse, url: browserUse?.url },
+      { record: latestOpenTab, url: latestOpenTab?.url },
+    ]
+      .map((candidate) => ({ ...candidate, pageUrl: normalizedHttpUrl(candidate.url) }))
+      .find((candidate) => candidate.pageUrl !== undefined);
+    const pageUrl = selectedPage?.pageUrl;
+    const faviconUrl = normalizedImageUrl(
+      selectedPage?.record?.faviconUrl ?? selectedPage?.record?.favIconUrl,
+    );
+    const faviconUrlDark = normalizedImageUrl(
+      selectedPage?.record?.faviconUrlDark ?? selectedPage?.record?.favIconUrlDark,
+    );
+    const name =
+      browserDisplayName(appContext?.appName) ??
+      browserDisplayName(surface.browserFamily) ??
+      browserDisplayName(surface.backend) ??
+      "Browser";
+    const nativeBrowserIcon = browserNativeAppReference(name);
+    const sourceIcon =
+      sourceLogo ??
+      (nativeBrowserIcon ? ({ _tag: "native-app", app: nativeBrowserIcon } as const) : undefined);
+    const sourceKeyPart = normalizedSourceKeyPart(name) || "browser";
+    return {
+      toolSurface: "browser",
+      ...(pageUrl
+        ? {
+            toolIcon: {
+              _tag: "website",
+              pageUrl,
+              ...(faviconUrl ? { faviconUrl } : {}),
+              ...(faviconUrlDark ? { faviconUrlDark } : {}),
+            } as const,
+          }
+        : {}),
+      toolSource: {
+        key: `browser-use:${sourceKeyPart}`,
+        name,
+        kind: name === "Browser" ? "browser" : "integration",
+        ...(sourceIcon ? { icon: sourceIcon } : {}),
+      },
+    };
+  }
+  if (surface?.kind === "computerUse") {
+    const app = nativeAppReference(surface.app);
+    const args = asUnknownRecord(item.arguments);
+    const argumentAppName =
+      normalizedDisplayName(args?.appName) ??
+      normalizedDisplayName(args?.application) ??
+      normalizedDisplayName(typeof args?.app === "string" ? args.app : undefined);
+    const name =
+      normalizedDisplayName(appContext?.appName) ??
+      argumentAppName ??
+      (app?._tag === "display-name" ? app.displayName : undefined) ??
+      (app?._tag === "app-id" ? appDisplayNameFromId(app.appId) : undefined) ??
+      "Computer Use";
+    const sourceIcon = sourceLogo ?? (app ? ({ _tag: "native-app", app } as const) : undefined);
+    const sourceKey = app
+      ? app._tag === "app-id"
+        ? nativeAppSourceKey(app.appId)
+        : `native-app-name:${normalizedSourceKeyPart(app.displayName)}`
+      : "computer-use";
+    return {
+      toolSurface: "computer",
+      ...(app ? { toolIcon: { _tag: "native-app", app } as const } : {}),
+      toolSource: {
+        key: sourceKey,
+        name,
+        kind: "computer",
+        ...(sourceIcon ? { icon: sourceIcon } : {}),
+      },
+    };
+  }
+
+  return {};
 }
 
 const FATAL_CODEX_STDERR_SNIPPETS = ["failed to connect to websocket"];
@@ -236,8 +475,82 @@ function toCanonicalItemType(raw: string | undefined | null): CanonicalItemType 
   return "unknown";
 }
 
-function itemTitle(itemType: CanonicalItemType, item?: CodexLifecycleItem): string | undefined {
+function boundedToolArgument(value: unknown): string | undefined {
+  const normalized = typeof value === "string" ? value.trim().replace(/\s+/gu, " ") : "";
+  if (!normalized) return undefined;
+  return normalized.length <= 48 ? normalized : `${normalized.slice(0, 47)}…`;
+}
+
+function normalizedMcpToolName(value: string): string {
+  return (
+    value
+      .split(/__|[./:]/u)
+      .at(-1)
+      ?.trim() ?? value.trim()
+  );
+}
+
+function computerUseToolTitle(
+  item: Extract<CodexLifecycleItem, { readonly type: "mcpToolCall" }>,
+  presentation: McpToolPresentation,
+): string | undefined {
+  if (normalizeItemType(item.server) !== "computer use") return undefined;
+  if (item.status === "failed") return undefined;
+  const tool = normalizeItemType(normalizedMcpToolName(item.tool)).replace(/ /gu, "_");
+  const inProgress = item.status === "inProgress";
+  const args = asUnknownRecord(item.arguments);
+  const appName =
+    (presentation.toolSource?.kind === "computer" && presentation.toolSource.name !== "Computer Use"
+      ? presentation.toolSource.name
+      : undefined) ??
+    normalizedDisplayName(args?.appName) ??
+    normalizedDisplayName(args?.application) ??
+    normalizedDisplayName(typeof args?.app === "string" ? args.app : undefined);
+  const withApp = (label: string) => (appName ? `${label} in ${appName}` : label);
+  switch (tool) {
+    case "list_apps":
+      return inProgress ? "Listing apps" : "Listed apps";
+    case "click":
+      return withApp(inProgress ? "Clicking" : "Clicked");
+    case "drag":
+      return withApp(inProgress ? "Dragging" : "Dragged");
+    case "get_app_state":
+    case "get_state":
+      return appName
+        ? `${inProgress ? "Looking at" : "Looked at"} ${appName}`
+        : inProgress
+          ? "Looking at the screen"
+          : "Looked at the screen";
+    case "perform_accessibility_action":
+    case "perform_secondary_action":
+      return inProgress ? "Performing accessibility action" : "Performed accessibility action";
+    case "press_key":
+      return withApp(inProgress ? "Pressing key" : "Pressed key");
+    case "scroll": {
+      const direction = boundedToolArgument(args?.direction)?.toLowerCase();
+      return withApp(`${inProgress ? "Scrolling" : "Scrolled"}${direction ? ` ${direction}` : ""}`);
+    }
+    case "set_value":
+      return withApp(inProgress ? "Setting value" : "Set value");
+    case "type_text":
+      return withApp(inProgress ? "Typing text" : "Typed text");
+    default:
+      return undefined;
+  }
+}
+
+function itemTitle(
+  itemType: CanonicalItemType,
+  item?: CodexLifecycleItem,
+  presentation: McpToolPresentation = {},
+): string | undefined {
   if (itemType === "mcp_tool_call" && item?.type === "mcpToolCall") {
+    if (normalizedMcpToolName(item.tool) === "js") {
+      const intentTitle = normalizeMcpIntentTitle(asUnknownRecord(item.arguments)?.title);
+      if (intentTitle) return intentTitle;
+    }
+    const computerUseTitle = computerUseToolTitle(item, presentation);
+    if (computerUseTitle) return computerUseTitle;
     return `${item.server} · ${item.tool}`;
   }
   switch (itemType) {
@@ -300,6 +613,8 @@ function toRequestTypeFromMethod(method: string): CanonicalRequestType {
       return "file_read_approval";
     case "item/fileChange/requestApproval":
       return "file_change_approval";
+    case "mcpServer/elicitation/request":
+      return "mcp_elicitation_approval";
     case "applyPatchApproval":
       return "apply_patch_approval";
     case "execCommandApproval":
@@ -323,6 +638,8 @@ function toRequestTypeFromKind(kind: ProviderRequestKind | undefined): Canonical
       return "file_read_approval";
     case "file-change":
       return "file_change_approval";
+    case "mcp-elicitation":
+      return "mcp_elicitation_approval";
     default:
       return "unknown";
   }
@@ -474,11 +791,15 @@ function mapItemLifecycle(
   }
 
   const detail = itemDetail(itemType, item);
+  const toolPresentation = item.type === "mcpToolCall" ? mcpToolPresentation(item) : {};
+  const title = itemTitle(itemType, item, toolPresentation);
   const status =
     lifecycle === "item.started"
       ? "inProgress"
       : lifecycle === "item.completed"
-        ? "completed"
+        ? "status" in item && (item.status === "failed" || item.status === "declined")
+          ? item.status
+          : "completed"
         : undefined;
 
   return {
@@ -487,17 +808,285 @@ function mapItemLifecycle(
     payload: {
       itemType,
       ...(status ? { status } : {}),
-      ...(itemTitle(itemType, item) ? { title: itemTitle(itemType, item) } : {}),
+      ...(title ? { title } : {}),
       ...(detail ? { detail } : {}),
+      ...toolPresentation,
       ...(event.payload !== undefined ? { data: event.payload } : {}),
     },
   };
+}
+
+/**
+ * Maps the session runtime's synthetic `collabAgent/*` events (native
+ * multi-agent v2 child-thread signals) into the shared task.* lifecycle.
+ * Agent identity = child thread id; nickname is the display title, role is
+ * agentRole (fallback: last agentPath segment, then "general-purpose").
+ * A completed child turn is idle (resumable), not terminal. timelineBypass
+ * keeps these rows out of the parent chat.
+ */
+function mapCollabAgentEvent(
+  event: ProviderEvent,
+  canonicalThreadId: ThreadId,
+): ReadonlyArray<ProviderRuntimeEvent> {
+  const payload =
+    typeof event.payload === "object" && event.payload !== null
+      ? (event.payload as Record<string, unknown>)
+      : undefined;
+  const agentThreadId = typeof payload?.agentThreadId === "string" ? payload.agentThreadId : "";
+  if (!payload || agentThreadId.length === 0) {
+    return [];
+  }
+  const base = runtimeEventBase(event, canonicalThreadId);
+  const taskId = RuntimeTaskId.make(agentThreadId);
+  const agentPath = typeof payload.agentPath === "string" ? payload.agentPath : undefined;
+  const pathLeaf = agentPath?.split("/").findLast((segment) => segment.length > 0);
+  const nickname = typeof payload.nickname === "string" ? payload.nickname : undefined;
+  const role =
+    (typeof payload.role === "string" ? payload.role : undefined) ?? pathLeaf ?? "general-purpose";
+  // A bare thread id is not a name. Omitting the title lets the client fold
+  // keep the real one from task.started instead of clobbering it (probe
+  // finding: progress rows renamed math_one to its UUID).
+  const knownName = nickname ?? pathLeaf;
+  const title = knownName ?? agentThreadId;
+  const model = typeof payload.model === "string" ? payload.model.trim() : "";
+  const effort = typeof payload.effort === "string" ? payload.effort.trim() : "";
+  // Identity repeated on every status patch so rows are self-describing when
+  // the start row ages out of activity retention (review finding: a
+  // reconstructed agent had a UUID name and no role/path).
+  const linkage = {
+    role,
+    ...(knownName ? { title: knownName } : {}),
+    ...(model ? { model } : {}),
+    ...(effort ? { effort } : {}),
+    ...(agentPath ? { agentPath } : {}),
+    timelineBypass: true,
+  } as const;
+
+  switch (event.method) {
+    case "collabAgent/started":
+      return [
+        {
+          ...base,
+          type: "task.started",
+          payload: {
+            taskId,
+            description: title,
+            title,
+            ...linkage,
+            ...(typeof payload.parentThreadId === "string"
+              ? { parentAgentId: payload.parentThreadId }
+              : {}),
+          },
+        },
+      ];
+    case "collabAgent/metadataUpdated":
+      return [
+        {
+          ...base,
+          type: "task.updated",
+          payload: { taskId, ...linkage },
+        },
+      ];
+    case "collabAgent/activity": {
+      const activityKind = typeof payload.activityKind === "string" ? payload.activityKind : "";
+      if (activityKind === "interrupted") {
+        return [
+          {
+            ...base,
+            type: "task.updated",
+            payload: { taskId, status: "interrupted", ...linkage },
+          },
+        ];
+      }
+      if (activityKind === "started") {
+        // Wire-probe finding: children often register via subAgentActivity
+        // alone (no thread/started with a spawn source), so this is the one
+        // shot at a task.started with a real name — agentPath leaf beats a
+        // bare thread-id title.
+        return [
+          {
+            ...base,
+            type: "task.started",
+            payload: {
+              taskId,
+              description: title,
+              title,
+              ...linkage,
+            },
+          },
+        ];
+      }
+      // Reading a child's result also emits "interacted" after its turn is idle.
+      // Only the child's turn or thread lifecycle can prove it resumed work.
+      return [];
+    }
+    case "collabAgent/turnStarted":
+      return [
+        {
+          ...base,
+          type: "task.updated",
+          payload: { taskId, status: "running", ...linkage },
+        },
+      ];
+    case "collabAgent/turnCompleted": {
+      // Idle, not terminal: the identity is resumable via sendInput/resume.
+      const turn =
+        typeof payload.turn === "object" && payload.turn !== null
+          ? (payload.turn as Record<string, unknown>)
+          : undefined;
+      const turnStatus = typeof turn?.status === "string" ? turn.status : undefined;
+      const status =
+        turnStatus === "failed"
+          ? ("failed" as const)
+          : turnStatus === "interrupted"
+            ? ("interrupted" as const)
+            : ("idle" as const);
+      return [
+        {
+          ...base,
+          type: "task.updated",
+          payload: { taskId, status, ...linkage },
+        },
+      ];
+    }
+    case "collabAgent/statusChanged": {
+      const status =
+        typeof payload.status === "object" && payload.status !== null
+          ? (payload.status as Record<string, unknown>)
+          : undefined;
+      const statusType = typeof status?.type === "string" ? status.type : undefined;
+      if (statusType === "systemError") {
+        // Silently dropping this once left children stuck running forever.
+        return [
+          {
+            ...base,
+            type: "task.updated",
+            payload: { taskId, status: "failed", ...linkage },
+          },
+        ];
+      }
+      if (statusType === "active") {
+        const flags = Array.isArray(status?.activeFlags) ? status.activeFlags : [];
+        const waiting = flags.some(
+          (flag) => flag === "waitingOnApproval" || flag === "waitingOnUserInput",
+        );
+        return [
+          {
+            ...base,
+            type: "task.updated",
+            payload: { taskId, status: waiting ? "waiting" : "running", ...linkage },
+          },
+        ];
+      }
+      if (statusType === "idle") {
+        return [
+          {
+            ...base,
+            type: "task.updated",
+            payload: { taskId, status: "idle", ...linkage },
+          },
+        ];
+      }
+      return [];
+    }
+    case "collabAgent/tokenUsage": {
+      // Cumulative per child thread: always the `total` breakdown, never
+      // `last` (which shrinks on follow-ups). Client folds max-merge.
+      const tokenUsage =
+        typeof payload.tokenUsage === "object" && payload.tokenUsage !== null
+          ? (payload.tokenUsage as Record<string, unknown>)
+          : undefined;
+      const total =
+        typeof tokenUsage?.total === "object" && tokenUsage.total !== null
+          ? (tokenUsage.total as Record<string, unknown>)
+          : undefined;
+      const count = (value: unknown): number | undefined =>
+        typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
+      // Same validation as every other field: RuntimeTaskUsage.totalTokens
+      // is NonNegativeInt, so NaN/Infinity/negative wire values must miss.
+      const totalTokens = count(total?.totalTokens);
+      if (totalTokens === undefined) {
+        return [];
+      }
+      const typedUsage: RuntimeTaskUsage = {
+        totalTokens,
+        ...(count(total?.inputTokens) !== undefined
+          ? { inputTokens: count(total?.inputTokens) }
+          : {}),
+        ...(count(total?.cachedInputTokens) !== undefined
+          ? { cachedInputTokens: count(total?.cachedInputTokens) }
+          : {}),
+        ...(count(total?.outputTokens) !== undefined
+          ? { outputTokens: count(total?.outputTokens) }
+          : {}),
+        ...(count(total?.reasoningOutputTokens) !== undefined
+          ? { reasoningOutputTokens: count(total?.reasoningOutputTokens) }
+          : {}),
+      };
+      return [
+        {
+          ...base,
+          type: "task.progress",
+          payload: {
+            taskId,
+            description: title,
+            ...linkage,
+            typedUsage,
+          },
+        },
+      ];
+    }
+    case "collabAgent/item": {
+      const item =
+        typeof payload.item === "object" && payload.item !== null
+          ? (payload.item as Record<string, unknown>)
+          : undefined;
+      const itemTypeRaw = typeof item?.type === "string" ? item.type : undefined;
+      if (!itemTypeRaw) {
+        return [];
+      }
+      // A loose summary from the raw item: the child stream is untyped at
+      // this boundary (synthetic event payload), so read best-effort fields
+      // rather than force a schema decode.
+      const looseSummary =
+        (typeof item?.command === "string" ? item.command : undefined) ??
+        (typeof item?.title === "string" ? item.title : undefined) ??
+        (typeof item?.query === "string" ? item.query : undefined);
+      const canonical = toCanonicalItemType(itemTypeRaw);
+      const summary = looseSummary ?? canonical.replaceAll("_", " ");
+      return [
+        {
+          ...base,
+          type: "task.progress",
+          payload: {
+            taskId,
+            description: title,
+            ...linkage,
+            summary,
+          },
+        },
+      ];
+    }
+    case "collabAgent/closed":
+      return [
+        {
+          ...base,
+          type: "task.updated",
+          payload: { taskId, status: "interrupted", ...linkage },
+        },
+      ];
+    default:
+      return [];
+  }
 }
 
 function mapToRuntimeEvents(
   event: ProviderEvent,
   canonicalThreadId: ThreadId,
 ): ReadonlyArray<ProviderRuntimeEvent> {
+  if (event.kind === "notification" && event.method.startsWith("collabAgent/")) {
+    return mapCollabAgentEvent(event, canonicalThreadId);
+  }
   if (event.kind === "error") {
     if (!event.message) {
       return [];
@@ -535,6 +1124,11 @@ function mapToRuntimeEvents(
       ];
     }
 
+    const elicitation =
+      event.method === "mcpServer/elicitation/request"
+        ? readPayload(EffectCodexSchema.McpServerElicitationRequestParams, event.payload)
+        : undefined;
+    const elicitationApproval = elicitation ? describeMcpElicitation(elicitation) : undefined;
     const detail = (() => {
       switch (event.method) {
         case "item/commandExecution/requestApproval": {
@@ -551,6 +1145,8 @@ function mapToRuntimeEvents(
           );
           return payload?.reason ?? undefined;
         }
+        case "mcpServer/elicitation/request":
+          return elicitation?.message;
         case "applyPatchApproval": {
           const payload = readPayload(
             EffectCodexSchema.ServerRequest__ApplyPatchApprovalParams,
@@ -584,6 +1180,12 @@ function mapToRuntimeEvents(
         payload: {
           requestType: toRequestTypeFromMethod(event.method),
           ...(detail ? { detail } : {}),
+          ...(elicitationApproval
+            ? {
+                appName: elicitationApproval.appName,
+                options: elicitationApproval.options,
+              }
+            : {}),
           ...(event.payload !== undefined ? { args: event.payload } : {}),
         },
       },
@@ -845,6 +1447,27 @@ function mapToRuntimeEvents(
     if (!item) {
       return [];
     }
+    if (item.type === "agentMessage" && item.delivery === "async" && item.questions?.length) {
+      return [
+        {
+          ...runtimeEventBase(event, canonicalThreadId),
+          type: "user-input.requested",
+          requestId: RuntimeRequestId.make(`codex-async:${canonicalThreadId}:${item.id}`),
+          eventId: EventId.make(`codex-async:${canonicalThreadId}:${item.id}`),
+          payload: {
+            responseMode: "message",
+            questions: item.questions.map((question, index) => ({
+              id: String(index),
+              header: "Question",
+              question: question.title,
+              options: (question.options ?? []).map((label) => ({ label, description: "" })),
+              allowCustomAnswer: true,
+              multiSelect: false,
+            })),
+          },
+        },
+      ];
+    }
     const itemType = toCanonicalItemType(item.type);
     if (itemType === "plan") {
       const detail = itemDetail(itemType, item);
@@ -862,7 +1485,18 @@ function mapToRuntimeEvents(
       ];
     }
     const completed = mapItemLifecycle(event, canonicalThreadId, "item.completed");
-    return completed ? [completed] : [];
+    if (!completed || itemType !== "context_compaction") {
+      return completed ? [completed] : [];
+    }
+    return [
+      completed,
+      {
+        ...runtimeEventBase(event, canonicalThreadId),
+        eventId: EventId.make(`${event.id}:thread-compacted`),
+        type: "thread.state.changed",
+        payload: { state: "compacted" },
+      },
+    ];
   }
 
   if (
@@ -1125,16 +1759,19 @@ function mapToRuntimeEvents(
   }
 
   if (event.method === "account/rateLimits/updated") {
-    if (!readPayload(EffectCodexSchema.V2AccountRateLimitsUpdatedNotification, event.payload)) {
+    const payload = readPayload(
+      EffectCodexSchema.V2AccountRateLimitsUpdatedNotification,
+      event.payload,
+    );
+    const limits = payload ? codexRateLimitsToUpdate(payload.rateLimits) : undefined;
+    if (!limits) {
       return [];
     }
     return [
       {
         type: "account.rate-limits.updated",
         ...runtimeEventBase(event, canonicalThreadId),
-        payload: {
-          rateLimits: event.payload ?? {},
-        },
+        payload: { limits },
       },
     ];
   }
@@ -1447,6 +2084,10 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
           ),
         );
 
+        // Fork into the session scope, not the calling fiber. `forkChild` makes
+        // this a child of `startSession`, and Effect interrupts a fiber's
+        // children when it completes, so the consumer died on return and every
+        // runtime event the session emitted afterwards was dropped.
         const eventFiber = yield* Stream.runForEach(runtime.events, (event) =>
           Effect.gen(function* () {
             yield* writeNativeEvent(event);
@@ -1462,7 +2103,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
             }
             yield* Queue.offerAll(runtimeEventQueue, runtimeEvents);
           }),
-        ).pipe(Effect.forkChild);
+        ).pipe(Effect.forkIn(sessionScope));
 
         const started = yield* runtime.start().pipe(
           Effect.mapError(
@@ -1529,8 +2170,11 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
   });
 
   const sendTurn: CodexAdapterShape["sendTurn"] = Effect.fn("sendTurn")(function* (input) {
+    // Codex ingests images only. Anything else would be base64-encoded as an
+    // image and rejected or misread; generic files reach the agent through the
+    // path line ProviderService puts in the prompt.
     const codexAttachments = yield* Effect.forEach(
-      input.attachments ?? [],
+      (input.attachments ?? []).filter((attachment) => attachment.type === "image"),
       (attachment) => resolveAttachment(input, attachment),
       { concurrency: 1 },
     );
@@ -1583,6 +2227,15 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
       ),
     );
 
+  const compactThread: NonNullable<CodexAdapterShape["compactThread"]> = Effect.fn("compactThread")(
+    function* (threadId) {
+      const session = yield* requireSession(threadId);
+      yield* session.runtime.compactThread.pipe(
+        Effect.mapError((cause) => mapCodexRuntimeError(threadId, "thread/compact/start", cause)),
+      );
+    },
+  );
+
   const readThread: CodexAdapterShape["readThread"] = (threadId) =>
     requireSession(threadId).pipe(
       Effect.flatMap((session) => session.runtime.readThread),
@@ -1621,6 +2274,17 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
       })),
     );
   };
+
+  const uploadFeedback: CodexAdapterShape["uploadFeedback"] = (input) =>
+    requireSession(input.threadId).pipe(
+      Effect.flatMap((session) => session.runtime.uploadFeedback(input.reason)),
+      Effect.map(({ threadId }) => ({ feedbackId: threadId })),
+      Effect.mapError((cause) =>
+        cause._tag === "ProviderAdapterSessionNotFoundError"
+          ? cause
+          : mapCodexRuntimeError(input.threadId, "feedback/upload", cause),
+      ),
+    );
 
   const respondToRequest: CodexAdapterShape["respondToRequest"] = (threadId, requestId, decision) =>
     requireSession(threadId).pipe(
@@ -1703,12 +2367,15 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     provider: PROVIDER,
     capabilities: {
       sessionModelSwitch: "in-session",
+      promptlessTurnContinuation: true,
     },
     startSession,
     sendTurn,
+    compactThread,
     interruptTurn,
     readThread,
     rollbackThread,
+    uploadFeedback,
     respondToRequest,
     respondToUserInput,
     stopSession,

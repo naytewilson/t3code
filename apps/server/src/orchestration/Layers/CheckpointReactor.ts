@@ -8,6 +8,7 @@ import {
   TurnId,
   type OrchestrationEvent,
   type ProviderRuntimeEvent,
+  type VcsStatusLocalResult,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
@@ -18,6 +19,7 @@ import * as Option from "effect/Option";
 import type * as PlatformError from "effect/PlatformError";
 import * as Stream from "effect/Stream";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
+import { isTemporaryWorktreeBranch } from "@t3tools/shared/git";
 
 import { parseTurnDiffFilesFromUnifiedDiff } from "../../checkpointing/Diffs.ts";
 import {
@@ -27,6 +29,7 @@ import {
 import * as CheckpointStore from "../../checkpointing/CheckpointStore.ts";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { CheckpointReactor, type CheckpointReactorShape } from "../Services/CheckpointReactor.ts";
+import { forkParked } from "../../serverActivation.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
 import { RuntimeReceiptBus } from "../Services/RuntimeReceiptBus.ts";
@@ -161,7 +164,7 @@ const make = Effect.gen(function* () {
 
   const resolveThreadDetail = Effect.fn("resolveThreadDetail")(function* (threadId: ThreadId) {
     return yield* projectionSnapshotQuery
-      .getThreadDetailById(threadId)
+      .getThreadDetailById(threadId, { activityKinds: [] })
       .pipe(Effect.map(Option.getOrUndefined));
   });
 
@@ -534,15 +537,125 @@ const make = Effect.gen(function* () {
       return;
     }
 
-    yield* vcsStatusBroadcaster.refreshLocalStatus(sessionRuntime.value.cwd).pipe(
+    const local = yield* vcsStatusBroadcaster.refreshLocalStatus(sessionRuntime.value.cwd).pipe(
       Effect.catch((error) =>
         Effect.logWarning("failed to refresh local git status after turn completion", {
           threadId: event.threadId,
           turnId: event.turnId ?? null,
           cwd: sessionRuntime.value.cwd,
           detail: error.message,
+        }).pipe(Effect.as(null)),
+      ),
+    );
+    if (local !== null) {
+      yield* followWorktreeBranchDrift({
+        threadId: event.threadId,
+        cwd: sessionRuntime.value.cwd,
+        local,
+      });
+      yield* refreshPullRequestAfterTurn({
+        threadId: event.threadId,
+        turnId: toTurnId(event.turnId),
+        cwd: sessionRuntime.value.cwd,
+        local,
+      });
+    }
+  });
+
+  // Retry a missing PR after the agent finishes its push and PR creation.
+  // Re-read the projected branch after drift adoption. A rejected metadata
+  // update must not let this thread refresh another thread's checkout.
+  const refreshPullRequestAfterTurn = Effect.fn("refreshPullRequestAfterTurn")(function* (input: {
+    readonly threadId: ThreadId;
+    readonly turnId: TurnId | null;
+    readonly cwd: string;
+    readonly local: VcsStatusLocalResult;
+  }) {
+    const checkedOutBranch = input.local.refName;
+    if (checkedOutBranch === null || input.local.isDefaultRef) return;
+    const thread = yield* projectionSnapshotQuery
+      .getThreadShellById(input.threadId)
+      .pipe(Effect.map(Option.getOrUndefined));
+    if (!thread || thread.branch !== checkedOutBranch) return;
+    if (thread.session?.activeTurnId && !sameId(thread.session.activeTurnId, input.turnId)) return;
+    yield* vcsStatusBroadcaster.refreshPullRequestStatus(input.cwd).pipe(
+      Effect.catch((error) =>
+        Effect.logWarning("failed to refresh pull request status after turn completion", {
+          threadId: input.threadId,
+          cwd: input.cwd,
+          detail: error.message,
         }),
       ),
+    );
+  });
+
+  // A `git checkout` run inside a thread's dedicated worktree (by an agent or
+  // the user) bypasses T3's commands, so the thread's recorded branch goes
+  // stale. Since #4460 the client only attributes PR state to a thread when
+  // the checked-out branch equals the recorded one, so stale metadata silently
+  // orphans the thread's PR. Follow the drift here: adopt the checked-out
+  // branch as the thread's branch, but only when the worktree belongs to
+  // exactly this thread — for shared cwds the strict matching is the point.
+  const followWorktreeBranchDrift = Effect.fn("followWorktreeBranchDrift")(function* (input: {
+    readonly threadId: ThreadId;
+    readonly cwd: string;
+    readonly local: VcsStatusLocalResult;
+  }) {
+    // Detached HEAD has no branch to adopt; a temporary placeholder checkout
+    // means the first-turn auto-rename is still in flight — don't race it.
+    const checkedOutBranch = input.local.refName;
+    if (checkedOutBranch === null || isTemporaryWorktreeBranch(checkedOutBranch)) {
+      return;
+    }
+
+    yield* Effect.gen(function* () {
+      const thread = yield* projectionSnapshotQuery
+        .getThreadShellById(input.threadId)
+        .pipe(Effect.map(Option.getOrUndefined));
+      if (
+        !thread ||
+        thread.branch === null ||
+        thread.branch === checkedOutBranch ||
+        thread.worktreePath === null ||
+        thread.worktreePath !== input.cwd ||
+        isTemporaryWorktreeBranch(thread.branch)
+      ) {
+        return;
+      }
+
+      const shell = yield* projectionSnapshotQuery.getShellSnapshot();
+      const worktreeIsShared = shell.threads.some(
+        (other) => other.id !== thread.id && other.worktreePath === thread.worktreePath,
+      );
+      if (worktreeIsShared) {
+        return;
+      }
+
+      // expectedBranch makes this a compare-and-swap in the decider: if the
+      // recorded branch moved between our read and the dispatch (rename,
+      // concurrent drift-follow), the stale update is dropped.
+      yield* orchestrationEngine.dispatch({
+        type: "thread.meta.update",
+        commandId: yield* serverCommandId("worktree-branch-drift"),
+        threadId: thread.id,
+        branch: checkedOutBranch,
+        expectedBranch: thread.branch,
+      });
+      yield* Effect.logInfo("thread branch followed worktree checkout", {
+        threadId: thread.id,
+        previousBranch: thread.branch,
+        branch: checkedOutBranch,
+      });
+    }).pipe(
+      Effect.catchCause((cause) => {
+        if (Cause.hasInterruptsOnly(cause)) {
+          return Effect.failCause(cause);
+        }
+        return Effect.logWarning("failed to follow worktree branch drift", {
+          threadId: input.threadId,
+          cause: Cause.pretty(cause),
+        });
+      }),
     );
   });
 
@@ -675,6 +788,8 @@ const make = Effect.gen(function* () {
       return;
     }
 
+    yield* providerService.assertConversationRollbackSupported(event.payload.threadId);
+
     const restored = yield* checkpointStore.restoreCheckpoint({
       cwd: sessionRuntime.value.cwd,
       checkpointRef: targetCheckpointRef,
@@ -761,9 +876,8 @@ const make = Effect.gen(function* () {
 
     // When ProviderRuntimeIngestion creates a placeholder checkpoint (status "missing")
     // from a turn.diff.updated runtime event, capture the real git checkpoint to
-    // replace it. The providerService.streamEvents PubSub does not reliably deliver
-    // turn.completed runtime events to this reactor (shared subscription), so
-    // reacting to the domain event is the reliable path.
+    // replace it. ProviderService broadcasts runtime events to each subscriber.
+    // This domain-event path also captures checkpoints from turn diff updates.
     if (event.type === "thread.turn-diff-completed") {
       yield* captureCheckpointFromPlaceholder(event).pipe(
         Effect.catch((error) =>
@@ -833,7 +947,7 @@ const make = Effect.gen(function* () {
   const worker = yield* makeDrainableWorker(processInputSafely);
 
   const start: CheckpointReactorShape["start"] = Effect.fn("start")(function* () {
-    yield* Effect.forkScoped(
+    yield* forkParked(
       Stream.runForEach(orchestrationEngine.streamDomainEvents, (event) => {
         if (
           event.type !== "thread.turn-start-requested" &&
@@ -847,7 +961,7 @@ const make = Effect.gen(function* () {
       }),
     );
 
-    yield* Effect.forkScoped(
+    yield* forkParked(
       Stream.runForEach(providerService.streamEvents, (event) => {
         if (event.type !== "turn.started" && event.type !== "turn.completed") {
           return Effect.void;
