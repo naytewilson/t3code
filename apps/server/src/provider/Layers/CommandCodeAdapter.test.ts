@@ -87,6 +87,87 @@ describe("Command Code direct CLI adapter protocol", () => {
     );
   });
 
+  it("preserves Command Code thought and tool lifecycle records", () => {
+    const toolCallId = "call-read-1";
+    const lines = [
+      {
+        type: "event",
+        event: { type: "thinking_delta", text: "I will inspect the file first." },
+      },
+      {
+        type: "event",
+        event: {
+          type: "message_update",
+          content: [
+            {
+              type: "tool_use",
+              id: toolCallId,
+              name: "read_file",
+              input: { file_path: "/workspace/README.md" },
+            },
+          ],
+        },
+      },
+      {
+        type: "event",
+        event: {
+          type: "tool_queued",
+          toolCallId,
+          toolName: "read_file",
+          input: { file_path: "/workspace/README.md" },
+        },
+      },
+      {
+        type: "event",
+        event: {
+          type: "tool_running",
+          toolCallId,
+          toolName: "read_file",
+        },
+      },
+      {
+        type: "event",
+        event: {
+          type: "tool_completed",
+          toolCallId,
+          toolName: "read_file",
+          result: [{ type: "text", text: "PASEO CLI fidelity fixture" }],
+        },
+      },
+    ];
+
+    const parsed = lines.flatMap((line) => {
+      const value = parseCommandCodeJsonLine(JSON.stringify(line));
+      return Array.isArray(value) ? value : value === undefined ? [] : [value];
+    });
+
+    assert.deepEqual(parsed, [
+      { kind: "thought_delta", text: "I will inspect the file first." },
+      {
+        kind: "tool_call",
+        toolCallId,
+        toolName: "read_file",
+        status: "pending",
+        input: { file_path: "/workspace/README.md" },
+      },
+      {
+        kind: "tool_call",
+        toolCallId,
+        toolName: "read_file",
+        status: "pending",
+        input: { file_path: "/workspace/README.md" },
+      },
+      { kind: "tool_call", toolCallId, toolName: "read_file", status: "inProgress" },
+      {
+        kind: "tool_call",
+        toolCallId,
+        toolName: "read_file",
+        status: "completed",
+        output: [{ type: "text", text: "PASEO CLI fidelity fixture" }],
+      },
+    ]);
+  });
+
   it("parses --list-models output structurally without a hardcoded model list", () => {
     const output = [
       "Available models  ·  3 models",

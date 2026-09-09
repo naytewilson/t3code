@@ -31,14 +31,22 @@ import {
   ProviderAdapterValidationError,
   type ProviderAdapterError,
 } from "../Errors.ts";
-import type {
-  ProviderAdapterShape,
-  ProviderThreadSnapshot,
-} from "../Services/ProviderAdapter.ts";
+import type { ProviderAdapterShape, ProviderThreadSnapshot } from "../Services/ProviderAdapter.ts";
 import { DIRECT_CLI_REASONING_OPTION_ID } from "../Drivers/DirectCliDriverSupport.ts";
 
 export type DirectCliParsedLine =
   | { readonly kind: "assistant_delta"; readonly text: string }
+  | { readonly kind: "thought_delta"; readonly text: string }
+  | {
+      readonly kind: "tool_call";
+      readonly toolCallId: string;
+      readonly toolName: string;
+      readonly status: "pending" | "inProgress" | "completed" | "failed";
+      readonly input?: unknown;
+      readonly output?: unknown;
+      readonly description?: string;
+      readonly error?: string;
+    }
   | {
       readonly kind: "result";
       readonly subtype?: string;
@@ -47,6 +55,8 @@ export type DirectCliParsedLine =
       readonly finalText?: string;
       readonly error?: string;
     };
+
+export type DirectCliParsedOutput = DirectCliParsedLine | ReadonlyArray<DirectCliParsedLine>;
 
 export interface DirectCliTurnArgsInput {
   readonly prompt: string;
@@ -66,8 +76,23 @@ interface DirectCliSessionState {
   interrupted: boolean;
 }
 
+interface DirectCliToolSnapshot {
+  readonly toolName: string;
+  readonly input?: unknown;
+  readonly output?: unknown;
+  readonly description?: string;
+  readonly error?: string;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function accumulateToolOutput(previous: unknown, next: unknown): unknown {
+  if (previous === undefined) return next;
+  if (typeof previous === "string" && typeof next === "string") return previous + next;
+  if (Array.isArray(previous) && Array.isArray(next)) return [...previous, ...next];
+  return next;
 }
 
 function parseResumeSessionId(raw: unknown): string | undefined {
@@ -85,7 +110,10 @@ function selectedModel(selection: ModelSelection | undefined): string | undefine
 }
 
 function selectedEffort(selection: ModelSelection | undefined): string | undefined {
-  const effort = getModelSelectionStringOptionValue(selection, DIRECT_CLI_REASONING_OPTION_ID)?.trim();
+  const effort = getModelSelectionStringOptionValue(
+    selection,
+    DIRECT_CLI_REASONING_OPTION_ID,
+  )?.trim();
   return effort && effort !== "default" ? effort : undefined;
 }
 
@@ -96,7 +124,7 @@ export const makeDirectCliAdapter = Effect.fn("makeDirectCliAdapter")(function* 
   readonly environment: NodeJS.ProcessEnv;
   readonly sessionIdMode: "required-before-first-turn" | "reported-by-cli";
   readonly buildArgs: (input: DirectCliTurnArgsInput) => ReadonlyArray<string>;
-  readonly parseStdoutLine: (line: string) => DirectCliParsedLine | undefined;
+  readonly parseStdoutLine: (line: string) => DirectCliParsedOutput | undefined;
   readonly parseSessionLine?: (line: string) => string | undefined;
 }) {
   const crypto = yield* Crypto.Crypto;
@@ -122,6 +150,31 @@ export const makeDirectCliAdapter = Effect.fn("makeDirectCliAdapter")(function* 
   const nextItemId = randomUUIDv4.pipe(Effect.map(RuntimeItemId.make));
 
   const emit = (event: ProviderRuntimeEvent) => PubSub.publish(events, event).pipe(Effect.asVoid);
+
+  const directCliItemType = (
+    toolName: string,
+  ): "command_execution" | "file_change" | "dynamic_tool_call" => {
+    const normalized = toolName.trim().toLowerCase();
+    if (
+      normalized.includes("bash") ||
+      normalized.includes("command") ||
+      normalized.includes("shell") ||
+      normalized.includes("terminal")
+    ) {
+      return "command_execution";
+    }
+    if (
+      normalized.includes("write") ||
+      normalized.includes("edit") ||
+      normalized.includes("patch") ||
+      normalized.includes("replace") ||
+      normalized.includes("create") ||
+      normalized.includes("delete")
+    ) {
+      return "file_change";
+    }
+    return "dynamic_tool_call";
+  };
 
   const missingSession = (threadId: ThreadId) =>
     Effect.fail(
@@ -297,6 +350,7 @@ export const makeDirectCliAdapter = Effect.fn("makeDirectCliAdapter")(function* 
       let assistantText = "";
       let finalResult: Extract<DirectCliParsedLine, { kind: "result" }> | undefined;
       const stderrLines: string[] = [];
+      const toolSnapshots = new Map<string, DirectCliToolSnapshot>();
 
       const handleParsedLine = (parsed: DirectCliParsedLine | undefined) =>
         Effect.gen(function* () {
@@ -317,6 +371,78 @@ export const makeDirectCliAdapter = Effect.fn("makeDirectCliAdapter")(function* 
             });
             return;
           }
+          if (parsed.kind === "thought_delta") {
+            if (parsed.text.length === 0) return;
+            yield* emit({
+              type: "content.delta",
+              eventId: yield* nextEventId,
+              provider: input.provider,
+              providerInstanceId: input.instanceId,
+              threadId: turnInput.threadId,
+              createdAt: yield* nowIso,
+              turnId,
+              payload: { streamKind: "reasoning_text", delta: parsed.text },
+            });
+            return;
+          }
+          if (parsed.kind === "tool_call") {
+            const terminal = parsed.status === "completed" || parsed.status === "failed";
+            const previous = toolSnapshots.get(parsed.toolCallId);
+            const firstObservation = previous === undefined;
+            const snapshot: DirectCliToolSnapshot = {
+              ...previous,
+              toolName: parsed.toolName,
+              ...(parsed.input !== undefined ? { input: parsed.input } : {}),
+              ...(parsed.output !== undefined
+                ? { output: accumulateToolOutput(previous?.output, parsed.output) }
+                : {}),
+              ...(parsed.description !== undefined ? { description: parsed.description } : {}),
+              ...(parsed.error !== undefined ? { error: parsed.error } : {}),
+            };
+            const lifecycle = terminal
+              ? "item.completed"
+              : firstObservation
+                ? "item.started"
+                : "item.updated";
+            const data = {
+              toolCallId: parsed.toolCallId,
+              toolName: snapshot.toolName,
+              ...(snapshot.input !== undefined
+                ? { rawInput: snapshot.input, input: snapshot.input }
+                : {}),
+              ...(snapshot.output !== undefined
+                ? { rawOutput: snapshot.output, result: snapshot.output }
+                : {}),
+              ...(snapshot.description !== undefined ? { description: snapshot.description } : {}),
+              ...(snapshot.error !== undefined ? { error: snapshot.error } : {}),
+            };
+            yield* emit({
+              type: lifecycle,
+              eventId: yield* nextEventId,
+              provider: input.provider,
+              providerInstanceId: input.instanceId,
+              threadId: turnInput.threadId,
+              createdAt: yield* nowIso,
+              turnId,
+              itemId: RuntimeItemId.make(parsed.toolCallId),
+              payload: {
+                itemType: directCliItemType(parsed.toolName),
+                status: terminal
+                  ? parsed.status === "completed"
+                    ? "completed"
+                    : "failed"
+                  : "inProgress",
+                title: snapshot.toolName,
+                data,
+              },
+            });
+            if (terminal) {
+              toolSnapshots.delete(parsed.toolCallId);
+            } else {
+              toolSnapshots.set(parsed.toolCallId, snapshot);
+            }
+            return;
+          }
           finalResult = parsed;
           yield* updateProviderSessionId(state, reportedSessionId, parsed.sessionId);
         });
@@ -327,7 +453,11 @@ export const makeDirectCliAdapter = Effect.fn("makeDirectCliAdapter")(function* 
         child.stdout.pipe(
           Stream.decodeText,
           Stream.splitLines,
-          Stream.runForEach((line) => handleParsedLine(input.parseStdoutLine(line))),
+          Stream.runForEach((line) => {
+            const parsed = input.parseStdoutLine(line);
+            const records = Array.isArray(parsed) ? parsed : parsed ? [parsed] : [];
+            return Effect.forEach(records, handleParsedLine, { discard: true });
+          }),
         ),
       );
       const stderrEffect = mapProcessFailure(
@@ -353,10 +483,9 @@ export const makeDirectCliAdapter = Effect.fn("makeDirectCliAdapter")(function* 
       );
 
       const worker = Effect.gen(function* () {
-        const [, , exitCode] = yield* Effect.all(
-          [stdoutEffect, stderrEffect, exitCodeEffect],
-          { concurrency: "unbounded" },
-        );
+        const [, , exitCode] = yield* Effect.all([stdoutEffect, stderrEffect, exitCodeEffect], {
+          concurrency: "unbounded",
+        });
         yield* updateProviderSessionId(state, reportedSessionId, finalResult?.sessionId);
 
         if (assistantText.length === 0 && finalResult?.finalText) {
@@ -426,7 +555,9 @@ export const makeDirectCliAdapter = Effect.fn("makeDirectCliAdapter")(function* 
           ...state.session,
           status: "ready",
           activeTurnId: undefined,
-          ...(state.providerSessionId ? { resumeCursor: { sessionId: state.providerSessionId } } : {}),
+          ...(state.providerSessionId
+            ? { resumeCursor: { sessionId: state.providerSessionId } }
+            : {}),
           updatedAt: yield* nowIso,
         };
 
@@ -505,7 +636,11 @@ export const makeDirectCliAdapter = Effect.fn("makeDirectCliAdapter")(function* 
     Effect.gen(function* () {
       const state = sessions.get(threadId);
       if (!state) return yield* missingSession(threadId);
-      if (turnId !== undefined && state.activeTurnId !== undefined && turnId !== state.activeTurnId) {
+      if (
+        turnId !== undefined &&
+        state.activeTurnId !== undefined &&
+        turnId !== state.activeTurnId
+      ) {
         return;
       }
       state.interrupted = true;
@@ -524,7 +659,8 @@ export const makeDirectCliAdapter = Effect.fn("makeDirectCliAdapter")(function* 
           new ProviderAdapterValidationError({
             provider: input.provider,
             operation,
-            issue: "Headless direct CLI sessions cannot answer interactive approval or input requests.",
+            issue:
+              "Headless direct CLI sessions cannot answer interactive approval or input requests.",
           }),
         )
       : missingSession(threadId);
@@ -565,11 +701,9 @@ export const makeDirectCliAdapter = Effect.fn("makeDirectCliAdapter")(function* 
   };
 
   const stopAll: ProviderAdapterShape<ProviderAdapterError>["stopAll"] = () =>
-    Effect.forEach(
-      Array.from(sessions.keys()),
-      (threadId) => stopSession(threadId),
-      { discard: true },
-    );
+    Effect.forEach(Array.from(sessions.keys()), (threadId) => stopSession(threadId), {
+      discard: true,
+    });
 
   yield* Effect.addFinalizer(() => stopAll().pipe(Effect.ignore));
 

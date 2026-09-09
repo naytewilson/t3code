@@ -9,6 +9,7 @@ import {
 import {
   makeDirectCliAdapter,
   type DirectCliParsedLine,
+  type DirectCliParsedOutput,
   type DirectCliTurnArgsInput,
 } from "./DirectCliAdapter.ts";
 
@@ -59,7 +60,7 @@ export function parseCommandCodeSessionLine(line: string): string | undefined {
   return match?.[1];
 }
 
-export function parseCommandCodeJsonLine(line: string): DirectCliParsedLine | undefined {
+export function parseCommandCodeJsonLine(line: string): DirectCliParsedOutput | undefined {
   let raw: unknown;
   try {
     raw = JSON.parse(line);
@@ -77,6 +78,31 @@ export function parseCommandCodeJsonLine(line: string): DirectCliParsedLine | un
         : typeof event.delta === "string"
           ? event.delta
           : undefined;
+    if (eventType === "message_update" && Array.isArray(event.content)) {
+      const parsed: DirectCliParsedLine[] = [];
+      for (const content of event.content) {
+        if (!isRecord(content)) continue;
+        if (content.type === "text" && typeof content.text === "string") {
+          parsed.push({ kind: "assistant_delta", text: content.text });
+          continue;
+        }
+        if (
+          content.type === "tool_use" &&
+          typeof content.id === "string" &&
+          typeof content.name === "string"
+        ) {
+          parsed.push({
+            kind: "tool_call",
+            toolCallId: content.id,
+            toolName: content.name,
+            status: "pending",
+            ...(content.input !== undefined ? { input: content.input } : {}),
+          });
+        }
+      }
+      return directCliParsedOutput(parsed);
+    }
+
     if (
       text !== undefined &&
       (eventType === "text_delta" ||
@@ -84,6 +110,46 @@ export function parseCommandCodeJsonLine(line: string): DirectCliParsedLine | un
         eventType === "message_delta")
     ) {
       return { kind: "assistant_delta", text };
+    }
+
+    if (
+      text !== undefined &&
+      (eventType === "thinking_delta" ||
+        eventType === "thought_delta" ||
+        eventType === "reasoning_delta")
+    ) {
+      return { kind: "thought_delta", text };
+    }
+
+    if (
+      eventType === "tool_queued" ||
+      eventType === "tool_running" ||
+      eventType === "tool_completed" ||
+      eventType === "tool_hook_blocked"
+    ) {
+      const toolCallId = typeof event.toolCallId === "string" ? event.toolCallId : undefined;
+      const toolName = typeof event.toolName === "string" ? event.toolName : undefined;
+      if (!toolCallId || !toolName) return undefined;
+      const status =
+        eventType === "tool_queued"
+          ? "pending"
+          : eventType === "tool_running"
+            ? "inProgress"
+            : eventType === "tool_hook_blocked" || event.status === "failed"
+              ? "failed"
+              : "completed";
+      const output = event.result ?? event.output ?? event.hookOutput;
+      const error = typeof event.error === "string" ? event.error : undefined;
+      return {
+        kind: "tool_call",
+        toolCallId,
+        toolName,
+        status,
+        ...(event.input !== undefined ? { input: event.input } : {}),
+        ...(output !== undefined ? { output } : {}),
+        ...(typeof event.description === "string" ? { description: event.description } : {}),
+        ...(error ? { error } : {}),
+      };
     }
     return undefined;
   }
@@ -99,6 +165,11 @@ export function parseCommandCodeJsonLine(line: string): DirectCliParsedLine | un
     };
   }
   return undefined;
+}
+
+function directCliParsedOutput(parsed: DirectCliParsedLine[]): DirectCliParsedOutput | undefined {
+  if (parsed.length === 0) return undefined;
+  return parsed.length === 1 ? parsed[0] : parsed;
 }
 
 export const makeCommandCodeAdapter = (
