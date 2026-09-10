@@ -89,7 +89,7 @@ export function makeDirectCliServerProvider(input: {
    * bounded "Default" fallback in that case. The `default` slug is
    * reserved for the fallback and filtered out of discovery results.
    */
-  readonly discoverModels?: () => Effect.Effect<ReadonlyArray<ServerProviderModel>>;
+  readonly discoverModels?: () => Effect.Effect<ReadonlyArray<ServerProviderModel>, unknown>;
 }): ServerProviderShape {
   const probe = Effect.gen(function* () {
     const checkedAt = DateTime.formatIso(yield* DateTime.now);
@@ -184,5 +184,6 @@ export function makeDirectCliServerProvider(input: {
     getSnapshot: probe,
     refresh: probe,
     streamChanges: Stream.empty,
+    applyUsageLimits: () => Effect.void,
   };
 }
