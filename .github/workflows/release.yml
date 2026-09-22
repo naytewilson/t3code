@@ -5,8 +5,9 @@ on:
     tags:
       - "v*.*.*"
       - "!v*-nightly.*"
-  schedule:
-    - cron: "0 */3 * * *"
+  # schedule: paused 2026-09-21 (Milo) — blacksmith runners not provisioning for
+  # this repo; nightly check queued every 3h with no pickup. Re-enable or retarget
+  # runs-on once t3code has a working runner.
   workflow_dispatch:
     inputs:
       channel:
