@@ -73,8 +73,11 @@ const unitTestProject = {
     // The web runtime suite exercises auth bootstrap, saved environments,
     // and websocket subscription lifecycles. Under the full monorepo test
     // run, those async tests can exceed Vitest's default 5s budget.
+    // The stash image-compression tests stub multi-MB canvas encodings and
+    // have measured 4s isolated vs 16s+ under a loaded self-hosted runner,
+    // so the per-test budget needs headroom for that variance.
     hookTimeout: 15_000,
-    testTimeout: 15_000,
+    testTimeout: 30_000,
   },
 } satisfies TestProjectInlineConfiguration;
 
