@@ -70,7 +70,10 @@ jobs:
         run: vp run --filter @t3tools/desktop ensure:electron
 
       - name: Test
-        run: vp run test
+        # Bound task parallelism: under the default concurrency the
+        # self-hosted runner oversubscribes and heavy suites (web) hit
+        # vitest test/hook timeouts. 2 keeps the full suite under ~4 min.
+        run: vp run -r --concurrency-limit 2 test
 
       - name: Test resource monitor
         run: cargo test --locked --manifest-path native/resource-monitor/Cargo.toml

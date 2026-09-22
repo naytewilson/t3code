@@ -157,7 +157,10 @@ jobs:
         run: vp run typecheck
 
       - name: Test
-        run: vp run test
+        # Bound task parallelism: under the default concurrency the
+        # self-hosted runner oversubscribes and heavy suites (web) hit
+        # vitest test/hook timeouts. 2 keeps the full suite under ~4 min.
+        run: vp run -r --concurrency-limit 2 test
 
       - id: previous_tag
         name: Resolve previous release tag
