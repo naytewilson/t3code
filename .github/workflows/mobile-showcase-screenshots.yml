@@ -32,7 +32,7 @@ jobs:
   ios:
     name: iPhone 6.9, iPhone 6.5, and iPad 13
     if: inputs.platform == 'all' || inputs.platform == 'ios'
-    runs-on: macos-latest
+    runs-on: [self-hosted, macOS, ARM64, nayte-macos]
     timeout-minutes: 60
     steps:
       - name: Checkout

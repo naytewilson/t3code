@@ -80,7 +80,7 @@ jobs:
 
   mobile_native_static_analysis:
     name: Mobile Native Static Analysis
-    runs-on: macos-latest
+    runs-on: [self-hosted, macOS, ARM64, nayte-macos]
     timeout-minutes: 10
     steps:
       - name: Checkout
