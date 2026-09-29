@@ -183,7 +183,7 @@ export async function spawnOfficialMspRuntime(): Promise<MspRuntime> {
   let spawned;
   try {
     spawned = await handshake.initialize({
-      clientInfo: { name: "muse_acp", version: "0.1.0" },
+      clientInfo: { name: "muse_acp", version: "0.2.0" },
     });
   } catch (error) {
     await handshake.close().catch(() => undefined);
@@ -268,6 +268,11 @@ export class MspBackend implements MuseBackend {
   async cancel(sessionId: string, turnId: string): Promise<void> {
     const runtime = await this.#runtime();
     await runtime.connection.command("turn/cancel", { sessionId, turnId });
+  }
+
+  async setApprovalMode(sessionId: string, mode: string): Promise<void> {
+    const runtime = await this.#runtime();
+    await runtime.connection.command("session/setApprovalMode", { sessionId, mode });
   }
 
   async close(): Promise<void> {

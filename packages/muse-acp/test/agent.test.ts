@@ -54,6 +54,7 @@ class FakeBackend implements MuseBackend {
   readonly starts: string[] = [];
   readonly resumes: string[] = [];
   readonly cancels: Array<{ sessionId: string; turnId: string }> = [];
+  readonly approvalModes: Array<{ sessionId: string; mode: string }> = [];
   readonly session: FakeSession;
 
   constructor(session: FakeSession) {
@@ -72,6 +73,10 @@ class FakeBackend implements MuseBackend {
 
   async cancel(sessionId: string, turnId: string): Promise<void> {
     this.cancels.push({ sessionId, turnId });
+  }
+
+  async setApprovalMode(sessionId: string, mode: string): Promise<void> {
+    this.approvalModes.push({ sessionId, mode });
   }
 
   async close(): Promise<void> {}
@@ -199,5 +204,111 @@ describe("Muse ACP agent", () => {
       sessionId: "muse-session-1",
       toolCall: { toolCallId: "tool-1", title: "shell" },
     });
+  });
+
+  it("advertises effort and approval options and never touches approval on default", async () => {
+    const client = new FakeClient();
+    const session = new FakeSession("muse-session-1", completedTurn());
+    const backend = new FakeBackend(session);
+    const agent = new MuseAcpAgent(client, backend);
+
+    const created = await agent.newSession({ cwd: "/repo", mcpServers: [] } as never);
+    const ids = created.configOptions.map((option) => option.id).sort();
+    expect(ids).toEqual(["approval_mode", "reasoning_effort"]);
+
+    await agent.prompt({
+      sessionId: "muse-session-1",
+      prompt: [{ type: "text", text: "do the work" }],
+    } as never);
+    expect(backend.approvalModes).toEqual([]);
+  });
+
+  it("applies a selected approval mode immediately and re-asserts it per turn", async () => {
+    const client = new FakeClient();
+    const session = new FakeSession("muse-session-1", completedTurn());
+    const backend = new FakeBackend(session);
+    const agent = new MuseAcpAgent(client, backend);
+    await agent.newSession({ cwd: "/repo", mcpServers: [] } as never);
+
+    const updated = await agent.setSessionConfig({
+      sessionId: "muse-session-1",
+      configId: "approval_mode",
+      value: "allowAll",
+    });
+    expect(updated.configOptions.find((option) => option.id === "approval_mode")).toMatchObject({
+      currentValue: "allowAll",
+    });
+    expect(backend.approvalModes).toEqual([{ sessionId: "muse-session-1", mode: "allowAll" }]);
+
+    await agent.prompt({
+      sessionId: "muse-session-1",
+      prompt: [{ type: "text", text: "do the work" }],
+    } as never);
+    expect(backend.approvalModes).toEqual([
+      { sessionId: "muse-session-1", mode: "allowAll" },
+      { sessionId: "muse-session-1", mode: "allowAll" },
+    ]);
+  });
+
+  it("rejects unknown config values and unknown config ids closed", async () => {
+    const client = new FakeClient();
+    const session = new FakeSession("muse-session-1", completedTurn());
+    const backend = new FakeBackend(session);
+    const agent = new MuseAcpAgent(client, backend);
+    await agent.newSession({ cwd: "/repo", mcpServers: [] } as never);
+
+    await expect(
+      agent.setSessionConfig({
+        sessionId: "muse-session-1",
+        configId: "approval_mode",
+        value: "auto-accept",
+      }),
+    ).rejects.toThrow();
+    await expect(
+      agent.setSessionConfig({
+        sessionId: "muse-session-1",
+        configId: "nope",
+        value: "x",
+      }),
+    ).rejects.toThrow();
+    expect(backend.approvalModes).toEqual([]);
+  });
+
+  it("fails closed when a non-default posture cannot be applied", async () => {
+    const client = new FakeClient();
+    const session = new FakeSession("muse-session-1", completedTurn());
+    const backend = new FakeBackend(session);
+    (backend as unknown as Record<string, unknown>).setApprovalMode = undefined;
+    const agent = new MuseAcpAgent(client, backend);
+    await agent.newSession({ cwd: "/repo", mcpServers: [] } as never);
+
+    await expect(
+      agent.setSessionConfig({
+        sessionId: "muse-session-1",
+        configId: "approval_mode",
+        value: "denyUnmatched",
+      }),
+    ).rejects.toThrow(/cannot apply/);
+  });
+
+  it("throws loudly on a failed turn instead of reporting silent end_turn", async () => {
+    const client = new FakeClient();
+    const failedTurn: MuseBackendTurn = {
+      turnId: "turn-failed",
+      items: () => values([]),
+      deltas: () => values([]),
+      completed: Promise.resolve({ kind: "completed", terminal: "failed" }),
+    };
+    const session = new FakeSession("muse-session-1", failedTurn);
+    const backend = new FakeBackend(session);
+    const agent = new MuseAcpAgent(client, backend);
+    await agent.newSession({ cwd: "/repo", mcpServers: [] } as never);
+
+    await expect(
+      agent.prompt({
+        sessionId: "muse-session-1",
+        prompt: [{ type: "text", text: "do the work" }],
+      } as never),
+    ).rejects.toThrow(/terminal "failed"/);
   });
 });

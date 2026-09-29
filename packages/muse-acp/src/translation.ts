@@ -203,3 +203,20 @@ export function museOutcomeToAcpStopReason(outcome: MuseOutcomeLike): AcpStopRea
   const terminal = outcome.terminal ?? outcome.params?.terminal;
   return terminal === "cancelled" ? "cancelled" : "end_turn";
 }
+
+/**
+ * Failure text when a finished turn did not succeed. A turn that completes
+ * with an unexpected terminal (observed live: `failed` on subscription 429,
+ * HP native session 01a092a1) must surface as an error, never as a silent
+ * end_turn with an empty timeline. Success (`completed`/absent) and user
+ * cancellation stay non-failures; unqueued/terminalUnknown keep their
+ * specified cancelled mapping. The outcome carries only the terminal string,
+ * not the underlying reason (that lives in the native session log), so the
+ * text names the terminal and points there.
+ */
+export function museOutcomeFailure(outcome: MuseOutcomeLike): string | null {
+  if (outcome.kind !== "completed") return null;
+  const terminal = outcome.terminal ?? outcome.params?.terminal;
+  if (terminal === undefined || terminal === "completed" || terminal === "cancelled") return null;
+  return `Muse turn ended with terminal "${terminal}" (see the native Muse session log for the underlying reason)`;
+}

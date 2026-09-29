@@ -2,6 +2,7 @@ import {
   approvalChoicesToAcpOptions,
   museDeltaToAcpUpdate,
   museItemToAcpUpdate,
+  museOutcomeFailure,
   museOutcomeToAcpStopReason,
   promptBlocksToText,
   type MuseApprovalChoiceLike,
@@ -10,6 +11,13 @@ import {
   type MuseOutcomeLike,
   type PromptBlockLike,
 } from "./translation.js";
+import {
+  APPROVAL_CONFIG_ID,
+  APPROVAL_DEFAULT,
+  approvalConfigOption,
+  parseApprovalValue,
+  toMspApprovalMode,
+} from "./approval.js";
 import {
   EFFORT_CONFIG_ID,
   EFFORT_DEFAULT,
@@ -51,6 +59,12 @@ export interface MuseBackend {
   resumeSession(sessionId: string): Promise<MuseBackendSession>;
   cancel(sessionId: string, turnId: string): Promise<void>;
   close(): Promise<void>;
+  /**
+   * Apply an MSP approval enforcement mode. Optional so older backends keep
+   * working; the agent fails closed when a non-default posture is requested
+   * but the backend cannot apply it.
+   */
+  setApprovalMode?(sessionId: string, mode: string): Promise<void>;
   onUserInput?(handler: (request: MuseUserInputRequest) => Promise<AcpElicitationResponse>): void;
 }
 
@@ -76,6 +90,7 @@ interface SessionState {
   readonly session: MuseBackendSession;
   activeTurnId: string | null;
   effort: string;
+  approval: string;
 }
 
 function object(value: unknown): Record<string, unknown> | null {
@@ -152,7 +167,7 @@ export class MuseAcpAgent {
   ): Promise<{ readonly sessionId: string; readonly configOptions: SessionConfigOption[] }> {
     const session = await this.#backend.startSession(input.cwd);
     const state = this.#register(session);
-    return { sessionId: session.sessionId, configOptions: [effortConfigOption(state.effort)] };
+    return { sessionId: session.sessionId, configOptions: this.#options(state) };
   }
 
   async loadSession(
@@ -165,7 +180,7 @@ export class MuseAcpAgent {
       );
     }
     const state = this.#register(session);
-    return { configOptions: [effortConfigOption(state.effort)] };
+    return { configOptions: this.#options(state) };
   }
 
   async setSessionConfig(input: {
@@ -175,11 +190,15 @@ export class MuseAcpAgent {
   }): Promise<{ readonly configOptions: SessionConfigOption[] }> {
     const state = this.#sessions.get(input.sessionId);
     if (state === undefined) throw new Error(`Unknown Muse session: ${input.sessionId}`);
-    if (input.configId !== EFFORT_CONFIG_ID) {
+    if (input.configId === EFFORT_CONFIG_ID) {
+      state.effort = parseEffortValue(input.value);
+    } else if (input.configId === APPROVAL_CONFIG_ID) {
+      state.approval = parseApprovalValue(input.value);
+      await this.#applyApproval(input.sessionId, state);
+    } else {
       throw new Error(`Unknown Muse config option: ${input.configId}`);
     }
-    state.effort = parseEffortValue(input.value);
-    return { configOptions: [effortConfigOption(state.effort)] };
+    return { configOptions: this.#options(state) };
   }
 
   async prompt(input: AcpPromptInput): Promise<{ readonly stopReason: "end_turn" | "cancelled" }> {
@@ -189,12 +208,21 @@ export class MuseAcpAgent {
     const text = promptBlocksToText(input.prompt);
     if (text.length === 0) throw new Error("Muse prompt contained no text input");
 
+    // Re-assert the requested posture every turn: the mode is session-scoped
+    // server-side, so this also repairs drift from out-of-band changes. The
+    // guard keeps the Muse-default path await-free so cancellation timing is
+    // unchanged; #applyApproval is a no-op on default regardless.
+    if (toMspApprovalMode(state.approval) !== undefined) {
+      await this.#applyApproval(input.sessionId, state);
+    }
     const turn = await state.session.sendText(text, toReasoningTier(state.effort));
     state.activeTurnId = turn.turnId;
 
     try {
       await this.#streamTurn(input.sessionId, turn);
       const outcome = await turn.completed;
+      const failure = museOutcomeFailure(outcome);
+      if (failure !== null) throw new Error(failure);
       return { stopReason: museOutcomeToAcpStopReason(outcome) };
     } finally {
       if (state.activeTurnId === turn.turnId) state.activeTurnId = null;
@@ -220,10 +248,30 @@ export class MuseAcpAgent {
   }
 
   #register(session: MuseBackendSession): SessionState {
-    const state: SessionState = { session, activeTurnId: null, effort: EFFORT_DEFAULT };
+    const state: SessionState = {
+      session,
+      activeTurnId: null,
+      effort: EFFORT_DEFAULT,
+      approval: APPROVAL_DEFAULT,
+    };
     this.#sessions.set(session.sessionId, state);
     session.onApproval((request) => this.#approval(session.sessionId, request));
     return state;
+  }
+
+  #options(state: SessionState): SessionConfigOption[] {
+    return [effortConfigOption(state.effort), approvalConfigOption(state.approval)];
+  }
+
+  async #applyApproval(sessionId: string, state: SessionState): Promise<void> {
+    const mode = toMspApprovalMode(state.approval);
+    if (mode === undefined) return;
+    if (this.#backend.setApprovalMode === undefined) {
+      throw new Error(
+        `Muse session ${sessionId} requests approval_mode ${state.approval} but the backend cannot apply it`,
+      );
+    }
+    await this.#backend.setApprovalMode(sessionId, mode);
   }
 
   async #approval(

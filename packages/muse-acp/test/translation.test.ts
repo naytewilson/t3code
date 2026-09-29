@@ -4,6 +4,7 @@ import {
   approvalChoicesToAcpOptions,
   museDeltaToAcpUpdate,
   museItemToAcpUpdate,
+  museOutcomeFailure,
   museOutcomeToAcpStopReason,
   promptBlocksToText,
 } from "../src/translation.js";
@@ -154,5 +155,17 @@ describe("Muse MSP -> ACP translation", () => {
     );
     expect(museOutcomeToAcpStopReason({ kind: "unqueued" })).toBe("cancelled");
     expect(museOutcomeToAcpStopReason({ kind: "terminalUnknown" })).toBe("cancelled");
+  });
+
+  it("flags failed terminals for loud failure instead of silent end_turn", () => {
+    expect(museOutcomeFailure({ kind: "completed", terminal: "failed" })).toMatch(/"failed"/);
+    expect(museOutcomeFailure({ kind: "completed", params: { terminal: "failed" } })).toMatch(
+      /"failed"/,
+    );
+    expect(museOutcomeFailure({ kind: "completed", terminal: "completed" })).toBeNull();
+    expect(museOutcomeFailure({ kind: "completed", terminal: "cancelled" })).toBeNull();
+    expect(museOutcomeFailure({ kind: "completed" })).toBeNull();
+    expect(museOutcomeFailure({ kind: "unqueued" })).toBeNull();
+    expect(museOutcomeFailure({ kind: "terminalUnknown" })).toBeNull();
   });
 });

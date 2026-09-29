@@ -22,7 +22,9 @@ function fakeTurn(turnId = "turn-1"): MspTurnPort {
 class FakeSession implements MspSessionPort {
   readonly sessionId: string;
   readonly turn: MspTurnPort;
-  approvalHandler: ((request: Record<string, unknown>) => Promise<{ choiceId: string }>) | undefined;
+  approvalHandler:
+    | ((request: Record<string, unknown>) => Promise<{ choiceId: string }>)
+    | undefined;
   sent: Array<Record<string, unknown>> = [];
 
   constructor(sessionId: string, turn = fakeTurn()) {
@@ -113,6 +115,21 @@ describe("official MSP backend", () => {
       {
         method: "turn/cancel",
         params: { sessionId: "native-session", turnId: "turn-77" },
+      },
+    ]);
+  });
+
+  it("sets the session approval mode with the probe-proven command shape", async () => {
+    const session = new FakeSession("native-session");
+    const client = new FakeClient(session);
+    const connection = new FakeConnection();
+    const backend = new MspBackend(async () => ({ client, connection }));
+
+    await backend.setApprovalMode("native-session", "allowAll");
+    expect(connection.commands).toEqual([
+      {
+        method: "session/setApprovalMode",
+        params: { sessionId: "native-session", mode: "allowAll" },
       },
     ]);
   });

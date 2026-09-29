@@ -1,11 +1,11 @@
 {
   "name": "@nayte/muse-acp",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
-  "type": "module",
   "bin": {
     "muse-acp": "./dist/index.js"
   },
+  "type": "module",
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "smoke": "node scripts/stdio-smoke.mjs",

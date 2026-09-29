@@ -141,6 +141,19 @@ The bridge currently preserves:
 - Generic ACP model switching: the adapter uses Muse Code's own configured/default model. T3 shows
   **Agent default** until/if the bridge later exposes Muse model configuration as ACP session state.
 
+## Session configuration
+
+Two select options are advertised per session, both defaulting to "leave the host alone":
+
+- `reasoning_effort` (`default | minimal | low | medium | high | xhigh | ultra`) — thinking tier
+  sampled for each Muse turn. `default` omits the tier and lets `muse serve` decide.
+- `approval_mode` (`default | allowAll | promptUnmatched | onRequest | denyUnmatched`) — enforcement
+  posture applied via `session/setApprovalMode` (same shape as a manual probe, no `commandId`
+  needed). `default` never calls it. A non-default mode is applied on selection and re-asserted
+  before every turn, so out-of-band changes cannot silently linger; requesting a mode the backend
+  cannot apply fails closed. There is deliberately no read-only/plan tier: the old exec bridge's
+  `--disable-write --disable-shell` posture has no serve-side equivalent and is not approximated.
+
 Failing to advertise an unimplemented capability is intentional. A pretty checkbox that lies is not a
 feature.
 

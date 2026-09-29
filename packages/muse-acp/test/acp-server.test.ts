@@ -27,7 +27,7 @@ describe("Muse ACP server initialization", () => {
       agentInfo: {
         name: "muse-acp",
         title: "Muse Code",
-        version: "0.1.0",
+        version: "0.2.0",
       },
     });
   });
