@@ -3,6 +3,10 @@ name: PR Size
 on:
   pull_request_target:
     types: [opened, reopened, synchronize, ready_for_review, converted_to_draft]
+  # Manual proof path (2026-11-09, Decision 8): this repo's Workflow Execution
+  # Protections block pull_request_target runs, so the fleet-converted jobs
+  # below are proven via workflow_dispatch on the same runners.
+  workflow_dispatch:
 
 permissions:
   contents: read
