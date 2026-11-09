@@ -3,6 +3,10 @@ name: PR Size
 on:
   pull_request_target:
     types: [opened, reopened, synchronize, ready_for_review, converted_to_draft]
+  # Manual proof path (2026-11-09, Decision 8): this repo's Workflow Execution
+  # Protections block pull_request_target runs, so the fleet-converted jobs
+  # below are proven via workflow_dispatch on the same runners.
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -10,7 +14,7 @@ permissions:
 jobs:
   prepare-config:
     name: Prepare PR size config
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, linux, x64, anvil-ci-linux]
     outputs:
       labels_json: ${{ steps.config.outputs.labels_json }}
     steps:
@@ -58,7 +62,7 @@ jobs:
     name: Sync PR size label definitions
     needs: prepare-config
     if: github.event_name != 'pull_request_target'
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, linux, x64, anvil-ci-linux]
     permissions:
       contents: read
       issues: write
@@ -115,7 +119,7 @@ jobs:
     name: Label PR size
     needs: prepare-config
     if: github.event_name == 'pull_request_target'
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, linux, x64, anvil-ci-linux]
     permissions:
       contents: read
       issues: read
